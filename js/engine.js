@@ -13,6 +13,7 @@ const Store = {
     try {
       localStorage.setItem("rb." + key, JSON.stringify(value));
     } catch {}
+    if (typeof Sync !== "undefined") Sync.changed(key);
   },
 };
 

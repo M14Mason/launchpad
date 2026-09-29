@@ -77,7 +77,7 @@ function route() {
   const [view = "dashboard", ...rest] = location.hash.slice(1).split("/");
   const id = decodeURIComponent(rest.join("/"));
   document.querySelectorAll("#nav a").forEach((a) => a.classList.toggle("active", a.dataset.nav === (NAV_FOR[view] || "dashboard")));
-  const views = { dashboard: renderDashboard, internships: renderInternships, internship: renderInternship, generate: renderGenerate, colleges: renderColleges, college: renderCollege, skills: renderSkills, coach: renderCoach, resumes: renderResumes, resume: renderResumeView, settings: renderSettings };
+  const views = { dashboard: renderDashboard, internships: renderInternships, internship: renderInternship, generate: renderGenerate, colleges: renderColleges, college: renderCollege, skills: renderSkills, coach: renderCoach, resumes: renderResumes, resume: renderResumeView, settings: renderSettings, pair: renderPair };
   (views[view] || renderDashboard)(id);
   if (!route.keepScroll) window.scrollTo(0, 0);
   route.keepScroll = false;
@@ -1081,6 +1081,7 @@ function renderSettings() {
           <option value="claude-sonnet-5" ${s.model === "claude-sonnet-5" ? "selected" : ""}>Claude Sonnet 5 (cheaper)</option></select></label>
         <div class="row"><button class="btn primary" id="save-ai">Save</button><button class="btn" id="test-ai">Test key</button></div>
         <p class="small muted">Only use this on your own device.</p></div>
+      ${syncCardHTML()}
       <div class="card"><h3>Backup</h3>
         <p class="small muted">Skill Bank answers, coach chats and saved resumes live in this browser. Export to move them to another device.</p>
         <div class="row"><button class="btn" id="export">Export backup</button><label class="btn">Import backup<input type="file" id="import" accept="application/json" hidden></label></div>
@@ -1115,6 +1116,7 @@ function renderSettings() {
       toast("That file isn't a valid backup.");
     }
   };
+  wireSyncCard();
   $("reset").onclick = () => {
     if (!confirm("Erase all Skill Bank answers, coach chats, saved resumes, added companies and settings from this browser?")) return;
     [...KEYS, "settings"].forEach((k) => localStorage.removeItem("rb." + k));
@@ -1123,5 +1125,131 @@ function renderSettings() {
   };
 }
 
+// ================= SYNC =================
+function syncCardHTML() {
+  if (Sync.enabled()) {
+    const last = Sync.cfg().lastSync;
+    return `<div class="card" id="sync-card"><h3>Sync between devices</h3>
+      <p class="small"><span class="badge eligible">Connected</span> ${last ? "Last synced " + new Date(last).toLocaleString() : "Not synced yet"}.</p>
+      <p class="small muted">Changes upload automatically (encrypted). Your other devices pick them up whenever you open the app.</p>
+      <div class="row"><button class="btn primary" id="sync-now">Sync now</button><button class="btn" id="show-qr">Connect my phone</button><button class="btn ghost" id="sync-off">Disconnect this device</button></div>
+      <div id="qr-box"></div></div>`;
+  }
+  return `<div class="card" id="sync-card"><h3>Sync between devices</h3>
+    <p class="small muted">Keeps your Skill Bank, resumes, coach chats, phone number and API key the same on your PC and phone. Everything is encrypted with your passphrase before it's saved to a secret gist on your GitHub account.</p>
+    <ol class="small steps-list">
+      <li><a href="https://github.com/settings/tokens/new?scopes=gist&description=Launchpad%20sync" target="_blank" rel="noopener">Create a GitHub token ↗</a> — the “gist” box is already checked. Pick an expiration, click <strong>Generate token</strong>, and copy it.</li>
+      <li>Paste it here and choose a passphrase (8+ characters) you'll remember.</li>
+      <li>Click Connect, then use <strong>Connect my phone</strong> to scan a QR code.</li>
+    </ol>
+    <label class="field"><span>GitHub token</span><input type="password" id="sync-token" placeholder="ghp_…" autocomplete="off"></label>
+    <label class="field"><span>Sync passphrase</span><input type="password" id="sync-pass" placeholder="Same on every device" autocomplete="new-password"></label>
+    <button class="btn primary" id="sync-connect">Connect</button></div>`;
+}
+
+function chooseSide() {
+  return new Promise((resolve) => {
+    modalBody.innerHTML = `<h2>Which data should win?</h2>
+      <p>This device and your synced copy both have data. Pick one — the other gets replaced.</p>
+      <div class="row"><button class="btn primary" data-pick="cloud">Use synced data</button><button class="btn" data-pick="device">Use this device's data</button></div>`;
+    if (!modal.open) modal.showModal();
+    modalBody.querySelectorAll("[data-pick]").forEach((b) =>
+      b.addEventListener("click", () => {
+        modal.close();
+        resolve(b.dataset.pick);
+      })
+    );
+  });
+}
+
+async function doConnect(token, pass) {
+  const result = await Sync.connect(token, pass, chooseSide);
+  toast(result === "cloud" ? "Connected — loaded your synced data." : "Connected — your data is synced.");
+}
+
+function wireSyncCard() {
+  const $ = (id) => document.getElementById(id);
+  $("sync-connect")?.addEventListener("click", (e) =>
+    busy(e.currentTarget, async () => {
+      const token = $("sync-token").value.trim();
+      const pass = $("sync-pass").value;
+      if (!token) return toast("Paste your GitHub token first.");
+      await doConnect(token, pass);
+      renderSettings();
+    })
+  );
+  $("sync-now")?.addEventListener("click", (e) =>
+    busy(e.currentTarget, async () => {
+      const changed = await Sync.syncNow();
+      toast(changed ? "Loaded newer data from your other device." : "Everything's up to date.");
+      renderSettings();
+    })
+  );
+  $("sync-off")?.addEventListener("click", () => {
+    if (!confirm("Stop syncing on this device? Your data stays here and in the cloud.")) return;
+    Sync.disconnect();
+    renderSettings();
+  });
+  $("show-qr")?.addEventListener("click", async () => {
+    const box = $("qr-box");
+    box.innerHTML = `<p class="small">Scan this with your phone's camera, open the link, and enter the same passphrase. <strong>Don't share this code</strong> — it lets a device join your sync (your passphrase is still needed to read anything).</p><div id="qr" class="qr"></div>`;
+    try {
+      if (!window.QRCode)
+        await new Promise((res, rej) => {
+          const s = document.createElement("script");
+          s.src = "https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js";
+          s.onload = res;
+          s.onerror = () => rej(new Error("Couldn't load the QR code library — check your connection."));
+          document.head.appendChild(s);
+        });
+      new QRCode(document.getElementById("qr"), { text: Sync.pairLink(), width: 220, height: 220, correctLevel: QRCode.CorrectLevel.L });
+    } catch (err) {
+      box.innerHTML = `<p class="small">${esc(err.message)}</p>`;
+    }
+  });
+}
+
+let pendingPair = null;
+function renderPair() {
+  if (!pendingPair) return (app.innerHTML = empty(`That pairing link has already been used. On your PC, open Settings → Connect my phone to get a fresh QR code. <a href="#settings">Settings</a>`));
+  app.innerHTML = `<div class="card pair">
+      <h1>Connect this device</h1>
+      <p class="muted">Enter the sync passphrase you chose on your other device. Your data will load in a few seconds.</p>
+      <label class="field"><span>Sync passphrase</span><input type="password" id="pair-pass" autocomplete="current-password"></label>
+      <button class="btn primary block" id="pair-go">Connect</button>
+    </div>`;
+  document.getElementById("pair-go").addEventListener("click", (e) =>
+    busy(e.currentTarget, async () => {
+      await doConnect(pendingPair.t, document.getElementById("pair-pass").value);
+      pendingPair = null;
+      go("dashboard");
+    })
+  );
+}
+
+async function syncOnOpen() {
+  if (!Sync.enabled()) return;
+  try {
+    if (await Sync.syncNow()) {
+      route.keepScroll = true;
+      route();
+      toast("Loaded your latest data from your other device.");
+    }
+  } catch (e) {
+    toast("Sync: " + e.message);
+  }
+}
+
 // ================= boot =================
+{
+  // A pairing link carries a GitHub token — read it, then strip it from the address bar and history.
+  const m = location.hash.match(/^#pair\/(.+)$/);
+  if (m) {
+    pendingPair = Sync.readPairCode(m[1]);
+    if (pendingPair) Sync.setCfg({ gistId: pendingPair.g });
+    history.replaceState(null, "", location.pathname + "#pair");
+  }
+}
 route();
+syncOnOpen();
+document.addEventListener("visibilitychange", () => document.visibilityState === "visible" && syncOnOpen());
