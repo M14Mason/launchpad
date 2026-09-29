@@ -53,10 +53,20 @@ const AI = {
     let msg;
     // Server tools can pause a long turn; send it back to let Claude continue.
     for (let i = 0; i < 4; i++) {
-      msg =
-        model === "claude-opus-5"
-          ? await client.beta.messages.create({ ...params, betas: ["server-side-fallback-2026-07-01"], fallbacks: "default" })
-          : await client.messages.create(params);
+      try {
+        msg =
+          model === "claude-opus-5"
+            ? await client.beta.messages.create({ ...params, betas: ["server-side-fallback-2026-07-01"], fallbacks: "default" })
+            : await client.messages.create(params);
+      } catch (e) {
+        const friendly = {
+          401: "Your Claude API key was rejected — check it in Settings.",
+          403: "This API key doesn't have access to that model — try Sonnet 5 in Settings.",
+          429: "Too many requests right now — wait a minute and try again.",
+          529: "Claude is overloaded right now — try again in a minute.",
+        }[e.status];
+        throw new Error(friendly || (e.status >= 500 ? "Claude's servers had a problem — try again." : e.status ? `Request failed (${e.status}).` : "Couldn't reach Claude — check your internet connection."));
+      }
       if (msg.stop_reason !== "pause_turn") break;
       params.messages = [...params.messages, { role: "assistant", content: msg.content }];
     }
