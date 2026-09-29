@@ -1,0 +1,66 @@
+// Colleges with REAL published overall admit rates.
+// Sources: Expert Admissions "Final Admissions Data Class of 2029" (admits / applicants),
+//          College Kickstart "University of California Fall 2025 Admission Trends",
+//          Cal Poly SLO overall rate reported for Fall 2026.
+// Schools that stopped publishing rates (Stanford, Penn, Princeton, Cornell, Caltech, JHU) are left out
+// rather than guessed.
+//
+// [name, rate %, source, location, type, notes for Mason, url]
+(() => {
+  const rows = [
+    ["UCLA", 9.4, "Fall 2025 (UC)", "Los Angeles, CA", "Public · UC", "Most-applied-to UC. Strong economics and computer science; highly competitive for out-of-major switches.", "https://admission.ucla.edu/"],
+    ["UC Berkeley", 11.4, "Fall 2025 (UC)", "Berkeley, CA", "Public · UC", "Top-ranked public; Haas business and EECS/Data Science are among the most competitive majors anywhere.", "https://admissions.berkeley.edu/"],
+    ["UC San Diego", 28.4, "Fall 2025 (UC)", "La Jolla, CA", "Public · UC", "Your hometown UC. Strong in computer science, data science and economics; admission varies a lot by major.", "https://admissions.ucsd.edu/"],
+    ["UC Irvine", 28.7, "Fall 2025 (UC)", "Irvine, CA", "Public · UC", "Business (Merage) and computer science are popular; close to San Diego.", "https://admissions.uci.edu/"],
+    ["UC Santa Barbara", 38.3, "Fall 2025 (UC)", "Santa Barbara, CA", "Public · UC", "Strong economics and engineering; beach campus.", "https://admissions.sa.ucsb.edu/"],
+    ["UC Davis", 44.6, "Fall 2025 (UC)", "Davis, CA", "Public · UC", "Large research university; broad majors including managerial economics.", "https://www.ucdavis.edu/admissions"],
+    ["UC Santa Cruz", 72.9, "Fall 2025 (UC)", "Santa Cruz, CA", "Public · UC", "Well-known computer science and game design programs.", "https://admissions.ucsc.edu/"],
+    ["UC Riverside", 87.4, "Fall 2025 (UC)", "Riverside, CA", "Public · UC", "Business and engineering schools; high admit rate.", "https://admissions.ucr.edu/"],
+    ["UC Merced", 97.7, "Fall 2025 (UC)", "Merced, CA", "Public · UC", "Newest UC; nearly all eligible applicants admitted.", "https://admissions.ucmerced.edu/"],
+    ["Cal Poly San Luis Obispo", 30.5, "Fall 2026", "San Luis Obispo, CA", "Public · CSU", "Learn-by-doing; admission is by major (rates range widely).", "https://admissions.calpoly.edu/"],
+    ["USC", 10.4, "Class of 2029 (8,700 / 83,500)", "Los Angeles, CA", "Private", "Marshall business school and Viterbi engineering; large alumni network.", "https://admission.usc.edu/"],
+    ["MIT", 4.5, "Class of 2029 (1,324 / 29,282)", "Cambridge, MA", "Private", "Sloan offers undergrad business/finance; world-leading CS and engineering.", "https://mitadmissions.org/"],
+    ["Yale", 4.6, "Class of 2029 (2,308 / 50,228)", "New Haven, CT", "Private · Ivy", "Liberal-arts focus; economics is a top major.", "https://admissions.yale.edu/"],
+    ["Columbia", 4.3, "Class of 2029 (2,557 / 59,616)", "New York, NY", "Private · Ivy", "Core Curriculum; NYC finance access.", "https://undergrad.admissions.columbia.edu/"],
+    ["Brown", 5.7, "Class of 2029 (2,418 / 42,765)", "Providence, RI", "Private · Ivy", "Open curriculum — you design your own course plan.", "https://admission.brown.edu/"],
+    ["Dartmouth", 6.0, "Class of 2029 (1,702 / 28,230)", "Hanover, NH", "Private · Ivy", "Strong economics and a tight alumni network in finance.", "https://admissions.dartmouth.edu/"],
+    ["Duke", 4.8, "Class of 2029 (2,818 / 58,698)", "Durham, NC", "Private", "Economics and computer science are popular; strong finance placement.", "https://admissions.duke.edu/"],
+    ["Vanderbilt", 5.1, "Class of 2029 (2,401 / 47,171)", "Nashville, TN", "Private", "Economics and engineering; generous financial aid.", "https://admissions.vanderbilt.edu/"],
+    ["Northwestern", 7.0, "Class of 2029 (3,710 / 53,000)", "Evanston, IL", "Private", "Economics, engineering, and journalism are standouts.", "https://admissions.northwestern.edu/"],
+    ["NYU", 7.9, "Class of 2029 (9,420 / 120,000)", "New York, NY", "Private", "Stern undergrad business — a direct fit for finance.", "https://www.nyu.edu/admissions/undergraduate-admissions.html"],
+    ["Rice", 7.8, "Class of 2029 (2,852 / 36,777)", "Houston, TX", "Private", "Small classes; strong CS and sports-management/business programs.", "https://admission.rice.edu/"],
+    ["Notre Dame", 9.0, "Class of 2029 (3,186 / 35,401)", "Notre Dame, IN", "Private", "Mendoza business school is highly ranked for undergrad finance.", "https://admissions.nd.edu/"],
+    ["Georgetown", 12.2, "Class of 2029 (3,267 / 26,841)", "Washington, DC", "Private", "McDonough business school; DC internships.", "https://uadmissions.georgetown.edu/"],
+    ["Boston University", 12.7, "Class of 2029 (9,750 / 76,772)", "Boston, MA", "Private", "Questrom business school; big city campus.", "https://www.bu.edu/admissions/"],
+    ["Boston College", 12.6, "Class of 2029 (5,000 / 39,681)", "Chestnut Hill, MA", "Private", "Carroll School of Management — strong finance.", "https://www.bc.edu/bc-web/admission.html"],
+    ["Georgia Tech", 12.7, "Class of 2029 (8,520 / 66,895)", "Atlanta, GA", "Public", "Top-tier computer science and engineering.", "https://admission.gatech.edu/"],
+    ["Tufts", 10.5, "Class of 2029 (3,507 / 33,400)", "Medford, MA", "Private", "Economics and international relations; near Boston.", "https://admissions.tufts.edu/"],
+    ["Emory", 14.5, "Class of 2029 (5,058 / 34,914)", "Atlanta, GA", "Private", "Goizueta business school.", "https://apply.emory.edu/"],
+    ["University of Virginia", 15.4, "Class of 2029 (9,900 / 64,463)", "Charlottesville, VA", "Public", "McIntire commerce school is a top undergrad business program.", "https://admission.virginia.edu/"],
+    ["Amherst", 7.4, "Class of 2029 (1,175 / 15,818)", "Amherst, MA", "Private · Liberal arts", "Small liberal-arts college; no core requirements.", "https://www.amherst.edu/admission"],
+    ["Williams", 8.5, "Class of 2029 (1,313 / 15,520)", "Williamstown, MA", "Private · Liberal arts", "Top liberal-arts college; strong economics.", "https://admission.williams.edu/"],
+    ["Swarthmore", 7.4, "Class of 2029 (965 / 12,995)", "Swarthmore, PA", "Private · Liberal arts", "Rigorous academics near Philadelphia.", "https://www.swarthmore.edu/admissions-aid"],
+    ["Wellesley", 13.7, "Class of 2029 (1,192 / 8,700)", "Wellesley, MA", "Private · Women's college", "Women's college — check whether it fits you.", "https://www.wellesley.edu/admission-aid"],
+    ["Wesleyan", 16.1, "Class of 2029 (2,411 / 14,970)", "Middletown, CT", "Private · Liberal arts", "Flexible curriculum; strong arts and sciences.", "https://www.wesleyan.edu/admission/"],
+    ["Carleton", 19.5, "Class of 2029 (1,451 / 7,449)", "Northfield, MN", "Private · Liberal arts", "Known for teaching quality; strong CS.", "https://www.carleton.edu/admissions/"],
+    ["Colgate", 17.4, "Class of 2029 (3,005 / 17,308)", "Hamilton, NY", "Private · Liberal arts", "Strong alumni network in finance.", "https://www.colgate.edu/admission-financial-aid"],
+    ["University of Richmond", 21.0, "Class of 2029 (3,570 / 17,000)", "Richmond, VA", "Private", "Robins School of Business.", "https://admission.richmond.edu/"],
+    ["Villanova", 27.4, "Class of 2029 (7,207 / 26,305)", "Villanova, PA", "Private", "Villanova School of Business — strong finance placement.", "https://www1.villanova.edu/university/undergraduate-admission.html"],
+    ["Bucknell", 31.0, "Class of 2029 (3,571 / 11,521)", "Lewisburg, PA", "Private", "Freeman College of Management.", "https://www.bucknell.edu/admissions-aid"],
+    ["Macalester", 27.2, "Class of 2029 (2,396 / 8,816)", "St. Paul, MN", "Private · Liberal arts", "International focus in a big-city setting.", "https://www.macalester.edu/admissions/"],
+    ["Fordham", 54.0, "Class of 2029 (23,963 / 44,376)", "New York, NY", "Private", "Gabelli business school with NYC finance access.", "https://www.fordham.edu/undergraduate-admission/"],
+    ["American University", 54.0, "Class of 2029 (12,300 / 22,777)", "Washington, DC", "Private", "Kogod business school; DC internships.", "https://www.american.edu/admissions/"],
+  ];
+  window.COLLEGES = rows.map(([name, rate, src, location, type, notes, url]) => ({
+    id: "col-" + name.toLowerCase().replace(/[^a-z0-9]+/g, "-"),
+    name,
+    rate,
+    src,
+    location,
+    type,
+    notes,
+    url,
+    uc: type.includes("UC"),
+    ca: location.endsWith(", CA"),
+  }));
+})();

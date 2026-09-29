@@ -32,7 +32,14 @@ const uid = () => Math.random().toString(36).slice(2, 10);
 
 // ---------- keyword matching ----------
 // An alias ending in * is a prefix ("collaborat*"); otherwise it must match a whole word/phrase.
+const _aliasCache = new Map();
 function aliasRegex(alias) {
+  if (_aliasCache.has(alias)) return _aliasCache.get(alias);
+  const re = makeAliasRegex(alias);
+  _aliasCache.set(alias, re);
+  return re;
+}
+function makeAliasRegex(alias) {
   const prefix = alias.endsWith("*");
   const word = (prefix ? alias.slice(0, -1) : alias).trim().replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
   return new RegExp("(?<![a-z0-9])" + word + (prefix ? "" : "(?![a-z0-9])"), "i");
@@ -341,4 +348,46 @@ function analyzePosting(text) {
   else if (adultOnly) (status = "ineligible"), (reason = "The posting requires applicants to be 18+.");
   else if (juniorsOnly) (status = "soon"), (reason = "The posting is for high school juniors/seniors — you can apply as a junior (2027–28).");
   return { keywords, eligibility: { status, reason } };
+}
+
+// ---------- rewrite fact-check ----------
+// A reworded bullet is accepted only if it keeps the same numbers and adds no new tool/skill/proper noun
+// that isn't already somewhere in Mason's verified data.
+function dataBlockText(bank) {
+  return resumeToText(buildResume(null, bank, { phone: "" })) + " " + bank.answers.map((a) => a.answer).join(" ");
+}
+function verifyRewrite(original, rewritten, dataText, allowed = []) {
+  const ok = (a) => allowed.some((x) => x.toLowerCase() === a.replace("*", "").toLowerCase());
+  const nums = (s) => (s.replace(/,/g, "").match(/\d+(\.\d+)?/g) || []).sort().join("|");
+  if (nums(original) !== nums(rewritten)) return "changed or added a number";
+  if (rewritten.length > original.length * 1.8 + 40) return "grew too much (possible inflation)";
+  const lowerData = dataText.toLowerCase();
+  for (const k of SKILL_VOCAB)
+    for (const a of k.any)
+      if (!ok(a) && aliasRegex(a).test(rewritten) && !aliasRegex(a).test(original) && !aliasRegex(a).test(lowerData)) return `added “${k.term}”, which isn't in your data`;
+  const caps = rewritten.match(/(?<=\s)[A-Z][A-Za-z0-9+#.-]{2,}/g) || [];
+  for (const w of caps) if (!ok(w) && !lowerData.includes(w.toLowerCase())) return `added “${w}”, which isn't in your data`;
+  return null;
+}
+function applyRewrites(resume, map) {
+  const swap = (items) =>
+    items.map((it) => ({
+      ...it,
+      bullets: it.bullets.map((b) => (map[b.text] ? { ...b, text: map[b.text], original: b.text, reworded: true } : b)),
+    }));
+  return { ...resume, projects: swap(resume.projects), experience: swap(resume.experience) };
+}
+
+// Numbers in `text` that don't appear anywhere in `source`.
+function numbersNotIn(text, source) {
+  const norm = (s) => s.replace(/,/g, "");
+  const src = norm(source);
+  return [...new Set(norm(text).match(/\d+(\.\d+)?/g) || [])].filter((n) => !new RegExp("(?<![\d.])" + n.replace(".", "\.") + "(?![\d])").test(src));
+}
+
+// Descriptive terms a rewrite may add when the role asks for them (they describe work already in the data).
+// Tools (Excel, SQL, Java…) are never allowed unless they're already in Mason's data.
+const FRAMING_TERMS = ["data analysis", "analytics", "programming", "coding", "finance", "financial", "investing", "trading", "automation", "automated", "problem solving", "software development"];
+function allowedRewriteTerms(keywords) {
+  return keywords.flatMap((k) => k.any.map((a) => a.replace("*", ""))).filter((a) => FRAMING_TERMS.includes(a.toLowerCase()));
 }

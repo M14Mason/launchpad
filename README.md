@@ -1,44 +1,23 @@
-# Resume Builder — Mason Ngo
+# Launchpad: Mason Ngo
 
-A resume generator that uses only verified facts and never makes anything up.
+An internship, college, and resume app built only from verified facts.
 
-- **188 real programs at 174 organizations** (internships, research, paid programs, competitions). Each one is marked for you: Eligible, Check requirements, Not yet, or Not eligible. You can filter by location (remote, San Diego, California), pay, field, and type. Sources are listed at the top of `js/internships.js`.
-- **Build**: pick a company, pick a role, and get an ATS-friendly resume tailored to it, with a 0–100 rubric score, matched and missing keywords, and 3 interview practice questions.
-- **Eligibility filter**: college-only roles are refused, and the app suggests roles you can actually apply to.
-- **Skill Bank**: every skill gets a score for how much it will count on a resume. **Improve skill** asks you questions, saves your answers, and turns them into resume bullets. A bullet can't include a number that isn't already in your answers.
-- **Master Resume**: everything verified in one place, plus the weak spots a recruiter will notice.
+- **Dashboard**: a readiness score, "Next moves" that raise your odds, upcoming deadlines, and your best matches.
+- **Internships**: 140 real programs with official links, eligibility for you, and application dates. Every program shows your estimated chance, which starts from a real published acceptance rate (or a labeled estimate) and is adjusted for your GPA, skills, experience, and resume match. Each program page includes where to improve and your potential chance.
+- **Generate tailored resume**: researches the role (live, with an API key), reorders your experience, rewords lines toward the role's keywords, and fact-checks every change. Any new number, tool, or claim is blocked. You can undo any change.
+- **Colleges**: 42 colleges with real admit rates (Class of 2029 / Fall 2025), your estimated chance today, and your potential by senior year.
+- **Skill Bank coach**: asks one question at a time and follows up on what's missing (what you did, a number, the result). Once a skill is proven, it adds the bullet to your resume automatically after checking it against your answers.
 
-## Where the data lives
+Sources for acceptance rates and program data are listed at the top of `js/internships.js` and `js/colleges.js`.
 
-| What | Where | Public? |
-|---|---|---|
-| Resume facts | `js/profile.js` | Yes (in the repo) |
-| Companies/roles | `js/companies.js` | Yes |
-| Phone, API key, Skill Bank answers | Your browser (localStorage) | No |
+## Run it
 
-Use **Settings → Export backup** to move your Skill Bank to another device.
+Double-click `index.html`. No install needed.
 
-## Run it on your Windows PC
+## Where data lives
 
-Double-click `index.html`. It opens in your browser, and nothing needs to be installed.
-
-## Put it on GitHub Pages
-
-1. Create a repo on github.com (e.g. `resume-builder`) and push this folder.
-2. In the repo, go to **Settings → Pages → Build and deployment**, set Source to *Deploy from a branch*, choose Branch `main` and folder `/ (root)`, then click Save.
-3. After a minute, it's live at `https://<your-username>.github.io/resume-builder/`.
+Resume facts are in `js/profile.js`, which is public in the repo. Your phone number, API key, Skill Bank answers, coach chats, and saved resumes are stored only in your browser. Use Settings → Export backup to move them to another device.
 
 ## AI features (optional)
 
-Add a Claude API key from [console.anthropic.com](https://console.anthropic.com) under **Settings**. It powers:
-
-- **Find roles**: live web search of any company's openings, with an eligibility check
-- **Generate more questions**: new questions for a skill
-- **Draft from my answers**: turns your answers into a bullet
-- **Answer feedback**: scores your interview answers
-
-The key is saved only in your browser. Only use it on your own device.
-
-## Editing facts
-
-When something new is verified (for example, real Baker Ave work), add it through the Skill Bank or edit `js/profile.js`. Never add anything that isn't true. The app's scores assume every line is defensible in an interview.
+Add a Claude API key from console.anthropic.com in Settings. It enables live research, keyword rewording, the adaptive coach, "Find roles", and interview feedback.

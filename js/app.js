@@ -1,18 +1,20 @@
-// UI: Build (company -> role -> resume), Skill Bank, Master Resume, Settings.
+// Launchpad UI — hash-routed views:
+// #dashboard · #internships · #internship/<id> · #generate/<id> · #colleges · #college/<id>
+// #skills · #coach/<skillId> · #resumes · #resume/<id> · #settings
 
-const state = {
-  view: "build",
-  companyId: null,
-  roleId: null,
-  skillFilter: "all",
-  filters: { q: "", status: "open", where: "any", pay: "any", field: "all", kind: "all" },
-};
 const app = document.getElementById("app");
 const modal = document.getElementById("modal");
 const modalBody = document.getElementById("modal-body");
 
-const STATUS_LABEL = { eligible: "Eligible", check: "Check requirements", soon: "Not yet — prep", ineligible: "Not eligible" };
+const STATUS_LABEL = { eligible: "Eligible", check: "Check requirements", soon: "Not yet", ineligible: "Not eligible" };
 const STATUS_RANK = { eligible: 0, check: 1, soon: 2, ineligible: 3 };
+const KIND_LABEL = { internship: "Internship", research: "Research", program: "Program", competition: "Competition", virtual: "Virtual", volunteer: "Volunteer" };
+
+const state = {
+  filters: { q: "", status: "open", where: "any", pay: "any", field: "all", kind: "all", sort: "chance" },
+  colFilter: { set: "all", sort: "chance" },
+  skillFilter: "all",
+};
 
 function companies() {
   return [...COMPANIES, ...Store.get("aiCompanies", [])];
@@ -26,19 +28,7 @@ function toast(msg) {
   t.textContent = msg;
   t.classList.add("show");
   clearTimeout(toast._t);
-  toast._t = setTimeout(() => t.classList.remove("show"), 2600);
-}
-
-function go(view, extra = {}) {
-  Object.assign(state, { view }, extra);
-  location.hash = view;
-  render();
-  window.scrollTo(0, 0);
-}
-
-function render() {
-  document.querySelectorAll("#tabs button").forEach((b) => b.classList.toggle("active", b.dataset.view === state.view));
-  ({ build: renderBuild, skills: renderSkills, master: renderMaster, settings: renderSettings })[state.view]();
+  toast._t = setTimeout(() => t.classList.remove("show"), 2800);
 }
 
 async function busy(btn, fn) {
@@ -51,51 +41,174 @@ async function busy(btn, fn) {
     toast(e.message || String(e));
     console.error(e);
   } finally {
-    btn.disabled = false;
-    btn.innerHTML = html;
+    if (btn.isConnected) {
+      btn.disabled = false;
+      btn.innerHTML = html;
+    }
   }
 }
+const wait = (ms) => new Promise((r) => setTimeout(r, ms));
 
-// ================= BUILD =================
-function renderBuild() {
-  const company = state.companyId && findCompany(state.companyId);
-  if (!company) return renderCompanies();
-  const role = state.roleId && company.roles.find((r) => r.id === state.roleId);
-  if (!role) return renderRoles(company);
-  renderResult(company, role);
+// ---------- small UI pieces ----------
+function chanceTone(p) {
+  return p >= 60 ? "good" : p >= 25 ? "accent" : p >= 8 ? "warn" : "bad";
+}
+function ring(value, { size = 56, label, tone, suffix = "%" } = {}) {
+  const t = tone || chanceTone(value);
+  return `<div class="ring tone-${t}" style="--p:${Math.max(0, Math.min(100, value))};--size:${size}px"><span>${label ?? value + suffix}</span></div>`;
+}
+function statusBadge(s) {
+  return `<span class="badge ${s}">${STATUS_LABEL[s]}</span>`;
+}
+function chanceCell(r, ch) {
+  if (r.eligibility.status === "ineligible") return `<div class="ring tone-muted" style="--p:0;--size:52px"><span>—</span></div>`;
+  return ring(ch.chance, { size: 52 });
+}
+function rateLine(rate) {
+  return rate.src === "reported" ? `${rate.v}% <span class="muted">(reported: ${esc(rate.note)})</span>` : `~${rate.v}% <span class="muted">(estimate for a ${rate.tier} ${rate.tier === "entry" ? "sign-up" : "program"})</span>`;
+}
+function empty(msg) {
+  return `<div class="card empty">${msg}</div>`;
 }
 
-function crumbs(company, role) {
-  return `<div class="crumbs">
-    <button data-crumb="root">Companies</button>
-    ${company ? `<span class="muted">/</span>${role ? `<button data-crumb="company">${esc(company.name)}</button>` : `<span>${esc(company.name)}</span>`}` : ""}
-    ${role ? `<span class="muted">/</span><span>${esc(role.title)}</span>` : ""}
-  </div>`;
+// ---------- router ----------
+const NAV_FOR = { dashboard: "dashboard", internships: "internships", internship: "internships", generate: "internships", colleges: "colleges", college: "colleges", skills: "skills", coach: "skills", resumes: "resumes", resume: "resumes", settings: "settings" };
+function route() {
+  const [view = "dashboard", ...rest] = location.hash.slice(1).split("/");
+  const id = decodeURIComponent(rest.join("/"));
+  document.querySelectorAll("#nav a").forEach((a) => a.classList.toggle("active", a.dataset.nav === (NAV_FOR[view] || "dashboard")));
+  const views = { dashboard: renderDashboard, internships: renderInternships, internship: renderInternship, generate: renderGenerate, colleges: renderColleges, college: renderCollege, skills: renderSkills, coach: renderCoach, resumes: renderResumes, resume: renderResumeView, settings: renderSettings };
+  (views[view] || renderDashboard)(id);
+  if (!route.keepScroll) window.scrollTo(0, 0);
+  route.keepScroll = false;
 }
-function wireCrumbs() {
-  app.querySelectorAll("[data-crumb]").forEach((b) =>
-    b.addEventListener("click", () => go("build", b.dataset.crumb === "root" ? { companyId: null, roleId: null } : { roleId: null }))
-  );
-}
-
-function statusCounts(roles) {
-  const n = { eligible: 0, check: 0, soon: 0, ineligible: 0 };
-  roles.forEach((r) => n[r.eligibility.status]++);
-  return Object.entries(n)
-    .filter(([, v]) => v)
-    .map(([k, v]) => `<span class="badge ${k}">${v} ${STATUS_LABEL[k].toLowerCase()}</span>`)
-    .join(" ");
+window.addEventListener("hashchange", route);
+function go(hash) {
+  if (location.hash === "#" + hash) route();
+  else location.hash = hash;
 }
 
+// ================= DASHBOARD =================
+function readiness() {
+  const bank = getBank();
+  const master = scoreResume(buildResume(null, bank, getSettings()), null).total;
+  const skills = allSkills(bank).map((s) => cachedSkillScore(s, bank).total);
+  const skillAvg = Math.round(skills.reduce((a, b) => a + b, 0) / skills.length);
+  const reps = Object.values(Store.get("practice", {})).filter((t) => t && t.trim().length > 40).length;
+  const interview = Math.min(100, 20 + reps * 16);
+  return { master, skillAvg, reps, interview, total: Math.round(0.4 * master + 0.35 * skillAvg + 0.25 * interview) };
+}
+
+function nextMoves() {
+  const bank = getBank();
+  const moves = [];
+  const open = allRoles().filter(({ r }) => r.eligibility.status === "eligible");
+  const urgent = open
+    .map((x) => ({ ...x, away: monthsAway(x.r.deadline), ch: cachedChance(x.r) }))
+    .filter((x) => x.away !== null && x.away <= 2)
+    .sort((a, b) => a.away - b.away || b.ch.chance - a.ch.chance);
+  if (urgent[0]) moves.push({ tag: "Apply", text: `Apply to ${urgent[0].r.org} — ${urgent[0].r.title}. Deadline: ${urgent[0].r.deadline}. Your chance ≈ ${urgent[0].ch.chance}%.`, href: `#internship/${urgent[0].r.id}` });
+  const weakDemand = allSkills(bank)
+    .map((s) => ({ s, sc: cachedSkillScore(s, bank) }))
+    .filter((x) => x.sc.parts[2].pts >= 8)
+    .sort((a, b) => a.sc.total - b.sc.total)[0];
+  if (weakDemand) moves.push({ tag: "Skill", text: `Prove ${weakDemand.s.name} (${weakDemand.sc.total}/100) — roles you're targeting screen for it.`, href: `#coach/${weakDemand.s.id}` });
+  const flag = thinFlags(bank)[0];
+  if (flag) moves.push({ tag: "Resume", text: flag, href: "#skills" });
+  const top = open.map((x) => ({ ...x, ch: cachedChance(x.r) })).sort((a, b) => b.ch.chance - a.ch.chance).find((x) => x.r.kind === "internship" || x.r.kind === "research");
+  if (top) moves.push({ tag: "Resume", text: `Generate a tailored resume for your top match: ${top.r.org} (${top.ch.chance}%).`, href: `#generate/${top.r.id}` });
+  if (!AI.enabled()) moves.push({ tag: "Setup", text: "Add a Claude API key to unlock live role research, keyword rewording and the smart coach.", href: "#settings" });
+  const reps = Object.values(Store.get("practice", {})).filter((t) => t && t.trim().length > 40).length;
+  if (reps < 3) moves.push({ tag: "Interview", text: "Practice 3 interview answers — open any generated resume and scroll to Interview practice.", href: top ? `#generate/${top.r.id}` : "#internships" });
+  return moves.slice(0, 5);
+}
+
+function renderDashboard() {
+  const r = readiness();
+  const open = allRoles().filter(({ r }) => r.eligibility.status === "eligible").map((x) => ({ ...x, ch: cachedChance(x.r) }));
+  const top = open.filter((x) => x.r.kind === "internship" || x.r.kind === "research").sort((a, b) => b.ch.chance - a.ch.chance).slice(0, 6);
+  const soon = open.map((x) => ({ ...x, away: monthsAway(x.r.deadline) })).filter((x) => x.away !== null && x.away <= 3).sort((a, b) => a.away - b.away).slice(0, 5);
+  const cols = ["col-uc-san-diego", "col-ucla", "col-usc"].map((id) => COLLEGES.find((c) => c.id === id)).filter(Boolean);
+
+  app.innerHTML = `
+    <section class="hero">
+      <div class="hero-text">
+        <div class="eyebrow">Your launchpad</div>
+        <h1>Hi Mason — here's where you stand.</h1>
+        <p>10th grade · Canyon Crest Academy · Class of 2029 · 4.0 GPA</p>
+        <div class="row"><a class="btn primary" href="#internships">Find internships</a><a class="btn glass" href="#skills">Strengthen skills</a></div>
+      </div>
+      <div class="hero-score">
+        ${ring(r.total, { size: 132, label: r.total, tone: "hero" })}
+        <div><div class="hero-score-label">Readiness</div><div class="hero-score-sub">${r.total >= 75 ? "Strong shape" : r.total >= 55 ? "Solid — room to grow" : "Building up"}</div></div>
+      </div>
+      <svg class="hero-art" viewBox="0 0 400 200" aria-hidden="true"><defs><linearGradient id="ha" x1="0" x2="1"><stop offset="0" stop-color="#fff" stop-opacity=".0"/><stop offset="1" stop-color="#fff" stop-opacity=".35"/></linearGradient></defs><path d="M0 170 C60 160 90 120 140 125 S220 90 260 70 S340 40 400 20" stroke="url(#ha)" stroke-width="3" fill="none"/><circle cx="260" cy="70" r="5" fill="#fff" fill-opacity=".6"/><circle cx="400" cy="20" r="7" fill="#fff" fill-opacity=".8"/></svg>
+    </section>
+
+    <div class="stats">
+      ${[
+        ["Resume", r.master, "Master resume score", "#resumes"],
+        ["Skill proof", r.skillAvg, "Average Skill Bank score", "#skills"],
+        ["Interview", r.interview, `${r.reps} practice answer${r.reps === 1 ? "" : "s"} written`, "#internships"],
+        ["Open to you", open.length, "Programs you can apply to now", "#internships", true],
+      ]
+        .map(([k, v, sub, href, raw]) => `<a class="card stat" href="${href}"><div class="k">${k}</div><div class="stat-v">${v}${raw ? "" : '<span class="muted">/100</span>'}</div><div class="small muted">${sub}</div>${raw ? "" : `<div class="bar"><i style="width:${v}%"></i></div>`}</a>`)
+        .join("")}
+    </div>
+
+    <div class="two-col">
+      <section class="card">
+        <div class="section-head"><h2>Next moves</h2><span class="small muted">The actions that raise your odds most</span></div>
+        <div class="moves">${nextMoves()
+          .map((m) => `<a class="move" href="${m.href}"><span class="tag">${m.tag}</span><span>${esc(m.text)}</span><span class="chev">›</span></a>`)
+          .join("")}</div>
+      </section>
+      <section class="card">
+        <div class="section-head"><h2>Deadlines coming up</h2><a class="small" href="#internships">See all</a></div>
+        ${
+          soon.length
+            ? `<div class="list compact">${soon
+                .map(({ r, ch }) => `<a class="list-row" href="#internship/${r.id}">${ring(ch.chance, { size: 40 })}<div class="grow"><div class="row-title">${esc(r.org)}</div><div class="small muted">${esc(r.title)}</div></div><span class="pill">${esc(r.deadline)}</span></a>`)
+                .join("")}</div>`
+            : `<p class="muted small">No eligible deadlines in the next 3 months.</p>`
+        }
+      </section>
+    </div>
+
+    <section>
+      <div class="section-head"><h2>Your best internship &amp; research matches</h2><a class="small" href="#internships">Browse all ${open.length}</a></div>
+      <div class="grid cards3">${top
+        .map(
+          ({ r, ch }) => `<a class="card match" href="#internship/${r.id}">
+            <div class="spread">${ring(ch.chance, { size: 58 })}<span class="pill">${KIND_LABEL[r.kind] || "Role"}</span></div>
+            <div class="row-title">${esc(r.org)}</div><div class="small muted">${esc(r.title)}</div>
+            <div class="small">${esc(r.location)} · ${esc(r.pay)}</div></a>`
+        )
+        .join("")}</div>
+    </section>
+
+    <section>
+      <div class="section-head"><h2>College outlook</h2><a class="small" href="#colleges">All colleges</a></div>
+      <div class="grid cards3">${cols
+        .map((c) => {
+          const ch = cachedCollegeChance(c);
+          return `<a class="card match" href="#college/${c.id}"><div class="spread">${ring(ch.chance, { size: 58 })}<span class="pill">${c.rate}% admit</span></div><div class="row-title">${esc(c.name)}</div><div class="small muted">${esc(c.location)} · potential ${ch.potential}%</div></a>`;
+        })
+        .join("")}</div>
+    </section>`;
+}
+
+// ================= INTERNSHIPS =================
 const FILTERS = {
   status: [["open", "Open to me"], ["eligible", "Can apply now"], ["all", "Everything"]],
   where: [["any", "Anywhere"], ["remote", "Remote / online"], ["sd", "San Diego area"], ["ca", "California"]],
   pay: [["any", "Any pay"], ["paid", "Paid only"], ["nofee", "No fees"]],
-  field: [["all", "All fields"], ["tech", "Tech / CS"], ["finance", "Finance"], ["business", "Business / marketing"], ["research", "Research / science"], ["health", "Health"], ["arts", "Arts / media"], ["gov", "Government"], ["community", "Community / volunteer"]],
-  kind: [["all", "All types"], ["internship", "Internships"], ["research", "Research"], ["program", "Programs / courses"], ["competition", "Competitions"], ["virtual", "Virtual simulations"], ["volunteer", "Volunteer"]],
+  field: [["all", "All fields"], ["tech", "Tech / CS"], ["finance", "Finance"], ["business", "Business"], ["research", "Research"], ["health", "Health"], ["arts", "Arts / media"], ["gov", "Government"], ["community", "Community"]],
+  kind: [["all", "All types"], ["internship", "Internships"], ["research", "Research"], ["program", "Programs"], ["competition", "Competitions"], ["virtual", "Virtual"], ["volunteer", "Volunteer"]],
+  sort: [["chance", "Best chance"], ["deadline", "Deadline soonest"], ["name", "A–Z"]],
 };
 
-function roleMatches(company, r) {
+function roleMatches(r) {
   const f = state.filters;
   const s = r.eligibility.status;
   if (f.status === "eligible" && s !== "eligible") return false;
@@ -111,277 +224,377 @@ function roleMatches(company, r) {
   if (f.field !== "all" && (r.field || r.category) !== f.field) return false;
   if (f.kind !== "all" && r.kind !== f.kind) return false;
   if (f.q) {
-    const hay = `${company.name} ${r.title} ${r.location || ""}`.toLowerCase();
+    const hay = `${r.org} ${r.title} ${r.location || ""}`.toLowerCase();
     if (!f.q.toLowerCase().split(/\s+/).every((w) => hay.includes(w))) return false;
   }
   return true;
 }
 
-function renderCompanies() {
+function renderInternships() {
   const f = state.filters;
-  const all = companies();
-  const shown = all
-    .map((c) => ({ c, roles: c.roles.filter((r) => roleMatches(c, r)) }))
-    .filter((x) => x.roles.length || (x.c.ai && !f.q))
-    .sort((a, b) => {
-      const best = (x) => Math.min(...x.roles.map((r) => STATUS_RANK[r.eligibility.status]), 9);
-      return best(a) - best(b) || a.c.name.localeCompare(b.c.name);
-    });
-  const total = all.reduce((n, c) => n + c.roles.length, 0);
-  const matching = shown.reduce((n, x) => n + x.roles.length, 0);
-  const select = (key) =>
-    `<select data-filter="${key}">${FILTERS[key].map(([v, l]) => `<option value="${v}" ${f[key] === v ? "selected" : ""}>${l}</option>`).join("")}</select>`;
+  const all = allRoles().map(({ c, r }) => ({ c, r: { ...r, org: r.org || c.name } }));
+  let shown = all.filter(({ r }) => roleMatches(r)).map((x) => ({ ...x, ch: cachedChance(x.r) }));
+  const sorters = {
+    chance: (a, b) => STATUS_RANK[a.r.eligibility.status] - STATUS_RANK[b.r.eligibility.status] || b.ch.chance - a.ch.chance,
+    deadline: (a, b) => (monthsAway(a.r.deadline) ?? 99) - (monthsAway(b.r.deadline) ?? 99),
+    name: (a, b) => a.r.org.localeCompare(b.r.org),
+  };
+  shown.sort(sorters[f.sort]);
+  const select = (key) => `<select data-filter="${key}" aria-label="${key}">${FILTERS[key].map(([v, l]) => `<option value="${v}" ${f[key] === v ? "selected" : ""}>${l}</option>`).join("")}</select>`;
 
   app.innerHTML = `
-    <h1 class="page">Pick a company</h1>
-    <p class="lede">${total} real programs at ${all.length} organizations, checked against their public info (Sep 2026). Always confirm on the program's page before you apply.</p>
-    <div class="card filterbar">
-      <input type="text" id="search" placeholder="Search companies, programs, cities…" value="${esc(f.q)}">
-      <div class="filter-selects">${Object.keys(FILTERS).map(select).join("")}</div>
-      <div class="small muted">Showing <strong>${matching}</strong> programs at ${shown.length} organizations${
-        matching < total ? ` · <button class="linkbtn" id="clear-filters">Clear filters</button>` : ""
-      }</div>
+    <div class="page-head">
+      <div><h1>Internships & programs</h1><p class="muted">${all.length} real programs · every chance is an estimate built on a real rate and your profile.</p></div>
+      <button class="btn" id="add-company">+ Add a company</button>
     </div>
-    <div class="grid">
-      <button class="card clickable" id="other-company" style="border-style:dashed">
-        <h3>+ Other company</h3>
-        <p class="muted small" style="margin:0">Search any company's openings with AI, or paste a job posting.</p>
-      </button>
-      ${shown
+    <div class="card filterbar">
+      <input type="search" id="search" placeholder="Search programs, companies, cities…" value="${esc(f.q)}">
+      <div class="filter-selects">${Object.keys(FILTERS).map(select).join("")}</div>
+      <div class="small muted">Showing <strong>${shown.length}</strong> of ${all.length}</div>
+    </div>
+    <div class="list">${
+      shown
         .map(
-          ({ c, roles }) => `<button class="card clickable" data-company="${c.id}">
-            <div class="spread"><h3>${esc(c.name)}</h3>${c.ai ? '<span class="badge neutral">Added by you</span>' : ""}</div>
-            <p class="muted small" style="margin:0 0 10px">${esc(roles.length === 1 ? roles[0].title : c.blurb || "")}</p>
-            <div class="row" style="margin-top:auto">${statusCounts(roles.length ? roles : c.roles)}</div>
-          </button>`
+          ({ r, ch }) => `<a class="list-row card" href="#internship/${encodeURIComponent(r.id)}">
+            ${chanceCell(r, ch)}
+            <div class="grow">
+              <div class="row-title">${esc(r.org)}</div>
+              <div class="row-sub">${esc(r.title)}</div>
+              <div class="small muted">${esc([KIND_LABEL[r.kind], r.location, r.pay, r.deadline && "Deadline: " + r.deadline].filter(Boolean).join(" · "))}</div>
+            </div>
+            <div class="row-end">${statusBadge(r.eligibility.status)}<span class="chev">›</span></div>
+          </a>`
         )
-        .join("")}
-    </div>`;
-  app.querySelectorAll("[data-company]").forEach((b) => b.addEventListener("click", () => go("build", { companyId: b.dataset.company, roleId: null })));
-  document.getElementById("other-company").addEventListener("click", openOtherCompany);
-  app.querySelectorAll("[data-filter]").forEach((s) => s.addEventListener("change", () => ((f[s.dataset.filter] = s.value), renderCompanies())));
-  document.getElementById("clear-filters")?.addEventListener("click", () => {
-    state.filters = { q: "", status: "all", where: "any", pay: "any", field: "all", kind: "all" };
-    renderCompanies();
-  });
+        .join("") || empty("No programs match these filters.")
+    }</div>`;
+
+  app.querySelectorAll("[data-filter]").forEach((s) => s.addEventListener("change", () => ((f[s.dataset.filter] = s.value), rerenderKeepScroll())));
   const search = document.getElementById("search");
   search.addEventListener("input", () => {
     f.q = search.value;
-    clearTimeout(renderCompanies._t);
-    renderCompanies._t = setTimeout(() => {
-      renderCompanies();
+    clearTimeout(renderInternships._t);
+    renderInternships._t = setTimeout(() => {
+      renderInternships();
       const s = document.getElementById("search");
       s.focus();
       s.setSelectionRange(s.value.length, s.value.length);
     }, 200);
   });
+  document.getElementById("add-company").addEventListener("click", openOtherCompany);
+}
+function rerenderKeepScroll() {
+  const y = window.scrollY;
+  route();
+  window.scrollTo(0, y);
 }
 
-function renderRoles(company) {
+function renderInternship(id) {
+  const found = findRole(id);
+  if (!found) return (app.innerHTML = empty(`Program not found. <a href="#internships">Back to internships</a>`));
+  const r = { ...found.r, org: found.r.org || found.c.name };
+  const ch = cachedChance(r);
+  const research = Store.get("research", {})[r.id];
+  const s = r.eligibility.status;
+  const about = r.about || `${r.title} is ${/^(unpaid|free)/i.test(r.pay) ? "an unpaid" : /fee/i.test(r.pay) ? "a paid-to-attend" : "a paid"} ${(KIND_LABEL[r.kind] || "program").toLowerCase()} run by ${r.org} in ${r.location}.`;
+
   app.innerHTML = `
-    ${crumbs(company)}
-    <div class="spread">
-      <div><h1 class="page">${esc(company.name)}</h1><p class="lede">Choose a role to generate a tailored resume.</p></div>
+    <a class="back" href="#internships">‹ All internships</a>
+    <div class="detail-head card">
+      <div>
+        <div class="eyebrow dark">${esc(r.org)}</div>
+        <h1>${esc(r.title)}</h1>
+        <div class="row">${statusBadge(s)}<span class="pill">${KIND_LABEL[r.kind] || "Role"}</span><span class="pill">${esc(r.location)}</span><span class="pill">${esc(r.pay)}</span></div>
+      </div>
       <div class="row">
-        ${company.source ? `<a class="btn small" href="${esc(company.source)}" target="_blank" rel="noopener">Source ↗</a>` : ""}
-        ${company.ai ? `<button class="btn small ghost" id="remove-company">Remove</button>` : ""}
+        ${r.url ? `<a class="btn" href="${esc(r.url)}" target="_blank" rel="noopener">Official page ↗</a>` : ""}
+        ${s !== "ineligible" ? `<a class="btn primary" href="#generate/${encodeURIComponent(r.id)}">Generate tailored resume</a>` : ""}
       </div>
     </div>
-    <div class="stack">
-      ${company.roles
-        .map(
-          (r) => `<div class="card clickable" role="button" tabindex="0" data-role="${r.id}">
-            <div class="spread"><h3>${esc(r.title)}</h3><span class="badge ${r.eligibility.status}">${STATUS_LABEL[r.eligibility.status]}</span></div>
-            <p class="muted small" style="margin:0 0 6px">${esc([r.kind ? r.kind[0].toUpperCase() + r.kind.slice(1) : r.type, r.location, r.pay, r.deadline && "Deadline: " + r.deadline].filter(Boolean).join(" · "))}</p>
-            <p class="small" style="margin:0">${esc(r.eligibility.reason)}</p>
-            ${r.url ? `<p class="small" style="margin:8px 0 0"><a href="${esc(r.url)}" target="_blank" rel="noopener" data-stop>${r.linkIsSearch ? "Search for the official page ↗" : "Program page ↗"}</a></p>` : ""}
-          </div>`
-        )
-        .join("") || `<div class="card muted">No roles found.</div>`}
-    </div>`;
-  wireCrumbs();
-  app.querySelectorAll("[data-role]").forEach((b) => {
-    const open = (e) => !e.target.closest("[data-stop]") && go("build", { roleId: b.dataset.role });
-    b.addEventListener("click", open);
-    b.addEventListener("keydown", (e) => e.key === "Enter" && open(e));
-  });
-  document.getElementById("remove-company")?.addEventListener("click", () => {
-    Store.set("aiCompanies", Store.get("aiCompanies", []).filter((c) => c.id !== company.id));
-    go("build", { companyId: null });
-  });
-}
 
-// Eligible roles, same field first, then San Diego / remote ones.
-function alternatives(role) {
-  const local = (r) => /san diego|la jolla|escondido|remote|online/i.test(`${r.location || ""} ${r.mode || ""}`);
-  return companies()
-    .flatMap((c) => c.roles.map((r) => ({ c, r })))
-    .filter(({ r }) => r.id !== role.id && r.eligibility.status === "eligible")
-    .map((x) => ({ ...x, s: ((x.r.field || x.r.category) === (role.field || role.category) ? 2 : 0) + (local(x.r) ? 1 : 0) }))
-    .sort((a, b) => b.s - a.s)
-    .slice(0, 8);
-}
+    <div class="detail">
+      <div class="stack">
+        <section class="card"><h2>What it is</h2><p>${esc(about)}</p><p class="small muted">${esc(r.eligibility.reason)}</p></section>
 
-function renderResult(company, role) {
-  const bank = getBank();
-  const status = role.eligibility.status;
+        <section class="card"><h2>Key dates</h2>
+          <div class="kv"><span>Applications open</span><strong>${esc(research?.opens || r.opens || "Not published — check the official page")}</strong></div>
+          <div class="kv"><span>Deadline</span><strong>${esc(research?.closes || r.deadline || "Varies")}</strong></div>
+          <p class="small muted">Dates are typical for this program${research ? " (updated by live research)" : ""} — confirm on the official page.</p>
+        </section>
 
-  if (status === "ineligible") {
-    const resume = buildResume(role, bank, getSettings());
-    const { missing } = scoreResume(resume, role);
-    app.innerHTML = `
-      ${crumbs(company, role)}
-      <div class="headline card">
-        <div><div class="k">Company</div><div class="v">${esc(company.name)}</div></div>
-        <div><div class="k">Role</div><div class="v">${esc(role.title)}</div></div>
-        <div><div class="k">Eligible</div><div class="v"><span class="badge ineligible">No</span></div></div>
+        <section class="card"><h2>How your chance is calculated</h2>
+          <div class="kv"><span>Starting rate</span><strong>${rateLine(ch.rate)}</strong></div>
+          ${ch.factors.map((f) => `<div class="factor ${f.good ? "good" : "weak"}"><span class="dot"></span><div class="grow"><strong>${esc(f.label)}</strong> — ${esc(f.value)}<div class="small muted">${esc(f.note)}</div></div></div>`).join("")}
+          <p class="small muted">Your profile multiplies your odds by about ×${ch.multiplier.toFixed(2)} compared with a typical applicant.</p>
+        </section>
+
+        <section class="card"><h2>Where to improve</h2>
+          <div class="moves">${ch.improve.map((i) => `<${i.skill ? `a href="#coach/${i.skill}"` : "div"} class="move"><span class="tag">Fix</span><span>${esc(i.text)}</span>${i.skill ? '<span class="chev">›</span>' : ""}</${i.skill ? "a" : "div"}>`).join("")}</div>
+        </section>
+
+        <section class="card" id="research-card"><div class="section-head"><h2>Live research</h2>
+          ${AI.enabled() ? `<button class="btn small" id="do-research">${research ? "Refresh" : "Research this program"}</button>` : `<a class="small" href="#settings">Add an API key to enable</a>`}</div>
+          <div id="research-out">${research ? researchHTML(research) : `<p class="muted small">Claude searches the official page and the web for what this program actually looks for, dates, and any published acceptance numbers.</p>`}</div>
+        </section>
       </div>
-      <div class="notice bad"><strong>Not generating this one.</strong> ${esc(role.eligibility.reason)}</div>
-      ${
-        missing.length
-          ? `<div class="card" style="margin-bottom:14px"><h3>Skill gaps for this kind of role</h3>
-            <ul>${missing.map((k) => `<li>Missing: ${esc(k.term)}. Learn ${esc(k.term)} before applying to programs like this.</li>`).join("")}</ul></div>`
-          : ""
-      }
-      <h3>Apply to these instead</h3>
-      <div class="stack">${alternatives(role)
-        .map(
-          ({ c, r }) => `<button class="card clickable" data-alt="${c.id}|${r.id}">
-            <div class="spread"><strong>${esc(c.name)} — ${esc(r.title)}</strong><span class="badge ${r.eligibility.status}">${STATUS_LABEL[r.eligibility.status]}</span></div>
-            <p class="small muted" style="margin:4px 0 0">${esc(r.eligibility.reason)}</p></button>`
-        )
-        .join("")}</div>`;
-    wireCrumbs();
-    app.querySelectorAll("[data-alt]").forEach((b) =>
-      b.addEventListener("click", () => {
-        const [companyId, roleId] = b.dataset.alt.split("|");
-        go("build", { companyId, roleId });
-      })
-    );
-    return;
-  }
 
-  const resume = buildResume(role, bank, getSettings());
-  const score = scoreResume(resume, role);
-  const questions = interviewQuestions(role, resume);
+      <aside class="chance-card card">
+        ${
+          s === "ineligible"
+            ? `<div class="ring tone-muted" style="--p:0;--size:140px"><span>—</span></div><h3>Not eligible</h3><p class="small">${esc(r.eligibility.reason)}</p>`
+            : `${ring(ch.chance, { size: 140 })}
+               <h3>${s === "soon" ? "Chance once you're eligible" : "Your estimated chance"}</h3>
+               <div class="kv"><span>Starting rate</span><strong>${ch.rate.v}%</strong></div>
+               <div class="kv"><span>You, today</span><strong>${ch.chance}%</strong></div>
+               <div class="kv"><span>Your potential</span><strong class="good-text">${ch.potential}%</strong></div>
+               <p class="small muted">Potential = if you close the gaps in “Where to improve”.</p>
+               ${s === "check" ? `<p class="small notice info">Assumes you meet the requirement flagged on the left.</p>` : ""}
+               <a class="btn primary block" href="#generate/${encodeURIComponent(r.id)}">Generate tailored resume</a>`
+        }
+      </aside>
+    </div>`;
+
+  document.getElementById("do-research")?.addEventListener("click", (e) =>
+    busy(e.currentTarget, async () => {
+      const cache = Store.get("research", {});
+      delete cache[r.id];
+      Store.set("research", cache);
+      const out = await AI.researchRole(r);
+      document.getElementById("research-out").innerHTML = researchHTML(out);
+      toast("Research updated.");
+    })
+  );
+}
+
+function researchHTML(x) {
+  const list = (a) => (a && a.length ? `<ul>${a.map((t) => `<li>${esc(t)}</li>`).join("")}</ul>` : "");
+  return `
+    ${x.summary ? `<p>${esc(x.summary)}</p>` : ""}
+    ${x.lookFor?.length ? `<h4>What they look for</h4>${list(x.lookFor)}` : ""}
+    ${x.acceptance ? `<div class="kv"><span>Published numbers</span><strong>${esc(x.acceptance)}</strong></div>` : ""}
+    ${x.tips?.length ? `<h4>Tips</h4>${list(x.tips)}` : ""}
+    ${x.sources?.length ? `<p class="small muted">Sources: ${x.sources.map((u) => `<a href="${esc(u)}" target="_blank" rel="noopener">${esc(u.replace(/^https?:\/\/(www\.)?/, "").split("/")[0])}</a>`).join(" · ")}</p>` : ""}`;
+}
+
+// ================= GENERATE =================
+const GEN_STEPS = ["Researching the role", "Matching your experience", "Adjusting wording for keywords", "Fact-checking every line", "Scoring against the role"];
+
+function renderGenerate(id) {
+  const found = findRole(id);
+  if (!found) return (app.innerHTML = empty(`Program not found. <a href="#internships">Back</a>`));
+  const role = { ...found.r, org: found.r.org || found.c.name };
+  if (role.eligibility.status === "ineligible") return renderInternship(id);
 
   app.innerHTML = `
-    ${crumbs(company, role)}
-    <div class="headline card">
-      <div><div class="k">Company</div><div class="v">${esc(company.name)}</div></div>
-      <div><div class="k">Role</div><div class="v">${esc(role.title)}</div></div>
-      <div><div class="k">Eligible</div><div class="v"><span class="badge ${status}">${{ eligible: "Yes", soon: "Not yet", check: "Check first" }[status]}</span></div><div class="small muted">${esc(role.eligibility.reason)}</div></div>
-      <div><div class="k">ATS Score</div><div class="bigscore">${score.total}<span class="muted" style="font-size:16px">/100</span></div><div class="small">${score.verdict}</div></div>
+    <a class="back" href="#internship/${encodeURIComponent(role.id)}">‹ ${esc(role.org)}</a>
+    <div class="card gen">
+      <div class="eyebrow dark">Building your resume for</div>
+      <h1>${esc(role.org)} — ${esc(role.title)}</h1>
+      <div class="steps">${GEN_STEPS.map((s, i) => `<div class="step" data-step="${i}"><span class="step-icon"></span><div><div class="step-title">${s}</div><div class="small muted step-detail"></div></div></div>`).join("")}</div>
+      ${AI.enabled() ? "" : `<p class="small muted">Tip: add a Claude API key in Settings so this step researches the role live and rewords bullets for its keywords.</p>`}
     </div>
-    ${status === "soon" ? `<div class="notice warn">You can't apply yet — this resume is prep so you're ready the day you qualify.</div>` : ""}
-    ${status === "check" ? `<div class="notice info">Before applying, confirm you meet this requirement — your data block doesn't say either way. ${role.url ? `<a href="${esc(role.url)}" target="_blank" rel="noopener">Check the program page ↗</a>` : ""}</div>` : ""}
-    ${role.deadline ? `<p class="small muted">Typical deadline: ${esc(role.deadline)} · ${esc(role.pay || "")} · ${esc(role.location || "")}</p>` : ""}
+    <div id="gen-result"></div>`;
+  runGenerate(role);
+}
+
+async function runGenerate(role) {
+  const step = (i, st, detail = "") => {
+    const el = app.querySelector(`[data-step="${i}"]`);
+    if (!el) return;
+    el.className = "step " + st;
+    el.querySelector(".step-detail").textContent = detail;
+  };
+  const token = (runGenerate.token = {});
+  const alive = () => runGenerate.token === token && document.getElementById("gen-result");
+
+  // 1. research
+  step(0, "run");
+  let research = Store.get("research", {})[role.id] || null;
+  let note = "";
+  if (!research && AI.enabled()) {
+    try {
+      research = await AI.researchRole(role);
+    } catch (e) {
+      note = "Live research failed (" + e.message + ") — using catalog data.";
+    }
+  } else await wait(900);
+  if (!alive()) return;
+  let keywords = role.keywords;
+  if (research?.keywords?.length) {
+    const seen = new Set(keywords.map((k) => k.term.toLowerCase()));
+    keywords = [...keywords, ...research.keywords.filter((k) => !seen.has(k.term.toLowerCase()))].slice(0, 14);
+  }
+  const target = { ...role, keywords };
+  step(0, "done", note || (research ? `Found ${research.lookFor?.length || 0} things they look for · ${keywords.length} keywords` : `Using catalog data · ${keywords.length} keywords`));
+
+  // 2. match
+  step(1, "run");
+  const bank = getBank();
+  const settings = getSettings();
+  const before = scoreResume(buildResume(null, bank, settings), target);
+  const tailored = buildResume(target, bank, settings);
+  await wait(700);
+  if (!alive()) return;
+  step(1, "done", `Reordered to lead with ${tailored.projects[0].title.split(" (")[0]}`);
+
+  // 3. reword
+  step(2, "run");
+  const bullets = [...tailored.projects, ...tailored.experience].flatMap((i) => i.bullets).filter((b) => !b.fromBank).map((b) => b.text);
+  const allowed = allowedRewriteTerms(keywords);
+  let proposals = [];
+  if (AI.enabled()) {
+    try {
+      proposals = await AI.tailorBullets(target, research, bullets, allowed);
+    } catch (e) {
+      note = "Rewording failed (" + e.message + ")";
+    }
+  } else await wait(700);
+  if (!alive()) return;
+  step(2, "done", AI.enabled() ? note || `${proposals.length} line${proposals.length === 1 ? "" : "s"} proposed` : "Skipped — needs an API key (your original wording is used)");
+
+  // 4. verify
+  step(3, "run");
+  const dataText = dataBlockText(bank);
+  const map = {};
+  const blocked = [];
+  for (const p of proposals) {
+    const orig = bullets[p.i];
+    if (!orig || p.text.trim() === orig) continue;
+    const why = verifyRewrite(orig, p.text.trim(), dataText, allowed);
+    if (why) blocked.push({ orig, text: p.text, why });
+    else map[orig] = p.text.trim().replace(/\.$/, "");
+  }
+  await wait(600);
+  if (!alive()) return;
+  step(3, "done", `${Object.keys(map).length} kept · ${blocked.length} blocked`);
+
+  // 5. score
+  step(4, "run");
+  await wait(500);
+  if (!alive()) return;
+  const gen = { role: target, base: tailored, map, blocked, before, research };
+  const after = scoreResume(applyRewrites(tailored, map), target);
+  step(4, "done", `ATS score ${before.total} → ${after.total}`);
+  renderGenResult(gen);
+}
+
+function renderGenResult(gen) {
+  const { role } = gen;
+  const resume = applyRewrites(gen.base, gen.map);
+  const score = scoreResume(resume, role);
+  const ch = cachedChance(role);
+  const changes = Object.entries(gen.map);
+  const questions = interviewQuestions(role, resume);
+  const out = document.getElementById("gen-result");
+  out.innerHTML = `
+    <div class="headline card">
+      <div><div class="k">Company</div><div class="v">${esc(role.org)}</div></div>
+      <div><div class="k">Role</div><div class="v">${esc(role.title)}</div></div>
+      <div><div class="k">Eligible</div><div class="v">${statusBadge(role.eligibility.status)}</div></div>
+      <div><div class="k">ATS score</div><div class="bigscore">${score.total}<span class="muted">/100</span></div><div class="small">${gen.before.total} before tailoring · ${score.verdict}</div></div>
+      <div><div class="k">Your chance</div><div class="bigscore">${ch.chance}%</div><div class="small">potential ${ch.potential}%</div></div>
+    </div>
     <div class="result">
       <div class="stack">
-        ${resumeActions()}
+        <div class="row">
+          <button class="btn primary" data-act="save">Save to my resumes</button>
+          <button class="btn" data-act="print">Save as PDF</button>
+          <button class="btn" data-act="copy">Copy text</button>
+          <button class="btn" data-act="txt">Download .txt</button>
+        </div>
         <div class="paper" id="resume-paper">${resumeToHTML(resume)}</div>
       </div>
       <div class="stack">
+        ${
+          changes.length || gen.blocked.length
+            ? `<div class="card"><h3>Wording changes</h3>
+              ${changes.map(([o, n]) => `<div class="change"><div class="old">${esc(o)}</div><div class="new">${esc(n)}</div><button class="btn small ghost" data-revert="${esc(o)}">Undo</button></div>`).join("")}
+              ${gen.blocked.length ? `<details class="small"><summary>${gen.blocked.length} suggestion${gen.blocked.length === 1 ? "" : "s"} blocked by the fact-check</summary>${gen.blocked.map((b) => `<p><span class="muted">${esc(b.text)}</span><br>✗ ${esc(b.why)}</p>`).join("")}</details>` : ""}
+            </div>`
+            : ""
+        }
         ${rubricCard(score)}
         ${keywordCard(score, role)}
       </div>
     </div>
-    <h2 style="margin-top:28px">Interview practice</h2>
-    <p class="lede">Would you like me to score your answer? (1) Dictate it, (2) Type it, or (3) See talking points from your data first.</p>
+    <h2 class="mt">Interview practice</h2>
+    <p class="muted">Type or dictate your answer, then score it. Talking points come only from your data.</p>
     <div class="stack">${questions.map((q, i) => practiceCard(q, i, role.id)).join("")}</div>`;
-  wireCrumbs();
-  wireResumeActions(resume, `${company.name} - ${role.title}`);
-  wirePractice(questions, role.id);
+
+  wireResumeActions(out, resume, `${role.org} - ${role.title}`, score, role);
+  out.querySelectorAll("[data-revert]").forEach((b) =>
+    b.addEventListener("click", () => {
+      delete gen.map[b.dataset.revert];
+      renderGenResult(gen);
+    })
+  );
+  wirePractice(out, questions, role.id);
+  out.scrollIntoView({ behavior: "smooth", block: "start" });
 }
 
-function resumeActions() {
-  return `<div class="row">
-    <button class="btn primary" data-act="print">Save as PDF</button>
-    <button class="btn" data-act="copy">Copy plain text</button>
-    <button class="btn" data-act="txt">Download .txt</button>
-  </div>`;
-}
-function wireResumeActions(resume, name) {
+function wireResumeActions(root, resume, name, score, role) {
   const text = resumeToText(resume);
-  app.querySelector('[data-act="copy"]').addEventListener("click", async () => {
+  root.querySelector('[data-act="copy"]').addEventListener("click", async () => {
     try {
       await navigator.clipboard.writeText(text);
-      toast("Copied — paste into the application's text box.");
+      toast("Copied — paste it into the application.");
     } catch {
-      toast("Copy blocked by the browser — use Download .txt instead.");
+      toast("Copy was blocked — use Download .txt instead.");
     }
   });
-  app.querySelector('[data-act="txt"]').addEventListener("click", () => {
+  root.querySelector('[data-act="txt"]').addEventListener("click", () => {
     const a = document.createElement("a");
     a.href = URL.createObjectURL(new Blob([text], { type: "text/plain" }));
     a.download = `Mason Ngo Resume - ${name}.txt`.replace(/[\\/:*?"<>|]/g, "");
     a.click();
     URL.revokeObjectURL(a.href);
   });
-  app.querySelector('[data-act="print"]').addEventListener("click", () => {
+  root.querySelector('[data-act="print"]').addEventListener("click", () => {
     document.getElementById("print-root").innerHTML = `<div class="paper">${resumeToHTML(resume)}</div>`;
-    const title = document.title;
+    const t = document.title;
     document.title = `Mason Ngo Resume - ${name}`;
     window.print();
-    document.title = title;
+    document.title = t;
+  });
+  root.querySelector('[data-act="save"]')?.addEventListener("click", () => {
+    const list = Store.get("resumes", []);
+    list.unshift({ id: uid(), name, roleId: role?.id || "", score: score.total, date: new Date().toISOString().slice(0, 10), resume });
+    Store.set("resumes", list.slice(0, 50));
+    toast("Saved to Resumes.");
   });
 }
 
 function rubricCard(score) {
-  return `<div class="card">
-    <h3>Scoring rubric</h3>
-    <table class="rubric" style="width:100%">
-      ${score.rows
-        .map(
-          (r) => `<tr><td style="width:100%"><strong>${r.name}</strong><div class="small muted">${esc(r.note)}</div>
-            <div class="bar"><i style="width:${r.score * 5}%"></i></div></td><td class="s">${r.score}/20</td></tr>`
-        )
-        .join("")}
-    </table>
-    <p class="small" style="margin:8px 0 0">No hallucination: ✓ every bullet cites your data block or your own Skill Bank answer.</p>
-  </div>`;
+  return `<div class="card"><h3>Scoring rubric</h3>
+    ${score.rows.map((r) => `<div class="rubric-row"><div class="spread"><strong>${r.name}</strong><span>${r.score}/20</span></div><div class="bar"><i style="width:${r.score * 5}%"></i></div><div class="small muted">${esc(r.note)}</div></div>`).join("")}
+    <p class="small">No hallucination ✓ — every bullet comes from your data block or your own Skill Bank answers.</p></div>`;
 }
 
 function keywordCard(score, role) {
-  if (!role.keywords.length) return `<div class="card"><h3>Keywords</h3><p class="muted small">No keywords detected for this role.</p></div>`;
-  return `<div class="card">
-    <h3>Keywords <span class="muted small">(★ = usually required)</span></h3>
-    <div class="chips" style="margin-bottom:10px">
-      ${score.matched.map((k) => `<span class="chip hit ${k.req ? "req" : ""}" title="Matched via “${esc(k.via)}”">✓ ${esc(k.term)}</span>`).join("")}
-      ${score.missing.map((k) => `<span class="chip miss ${k.req ? "req" : ""}">✗ ${esc(k.term)}</span>`).join("")}
+  if (!role.keywords.length) return "";
+  return `<div class="card"><h3>Keywords <span class="small muted">★ = usually required</span></h3>
+    <div class="chips">
+      ${score.matched.map((k) => `<span class="chip hit" title="Matched via “${esc(k.via)}”">✓ ${esc(k.term)}${k.req ? " ★" : ""}</span>`).join("")}
+      ${score.missing.map((k) => `<span class="chip miss">✗ ${esc(k.term)}${k.req ? " ★" : ""}</span>`).join("")}
     </div>
-    ${
-      score.missing.length
-        ? `<ul class="small" style="margin:0;padding-left:18px">${score.missing
-            .map((k) => `<li>Missing: ${esc(k.term)}. It's not in your data. If you really have done it, add it in the Skill Bank (with a real bullet); if not, recommend learning ${esc(k.term)} before applying.</li>`)
-            .join("")}</ul>`
-        : `<p class="small muted" style="margin:0">Every keyword is covered.</p>`
-    }
-    <p class="small muted" style="margin:10px 0 0">Keywords are what this kind of role usually screens for. For an exact match, use “+ Other company → Paste a posting”.</p>
+    ${score.missing.length ? `<p class="small muted">Missing keywords aren't added unless they're true. If you really have one, prove it in the Skill Bank; if not, it's something to learn.</p>` : `<p class="small muted">Every keyword is covered.</p>`}
   </div>`;
 }
 
 // ---------- interview practice ----------
 const Speech = window.SpeechRecognition || window.webkitSpeechRecognition;
-
 function practiceCard(q, i, roleId) {
   const saved = Store.get("practice", {})[`${roleId}:${i}`] || "";
   return `<div class="card" data-q="${i}">
-    <div class="row" style="margin-bottom:6px"><span class="badge neutral">${q.type}</span></div>
-    <div class="q" style="font-weight:600;margin-bottom:8px">${esc(q.q)}</div>
-    <details style="margin-bottom:10px"><summary class="small">Talking points from your data</summary>
-      <ul class="small">${q.points.map((p) => `<li>${esc(p)}</li>`).join("") || "<li>Nothing in your data covers this yet — add a Skill Bank answer.</li>"}</ul></details>
-    <textarea placeholder="Type your answer the way you'd say it…">${esc(saved)}</textarea>
-    <div class="row" style="margin-top:8px">
-      <button class="btn primary small" data-score>Score my answer</button>
-      ${Speech ? `<button class="btn small" data-mic>🎤 Dictate</button>` : ""}
-    </div>
+    <span class="pill">${q.type}</span>
+    <h3 class="q">${esc(q.q)}</h3>
+    <details><summary class="small">Talking points from your data</summary><ul class="small">${q.points.map((p) => `<li>${esc(p)}</li>`).join("") || "<li>Nothing in your data covers this yet — build it in the Skill Bank.</li>"}</ul></details>
+    <textarea placeholder="Answer the way you'd say it out loud…">${esc(saved)}</textarea>
+    <div class="row"><button class="btn primary small" data-score>Score my answer</button>${Speech ? `<button class="btn small" data-mic>🎤 Dictate</button>` : ""}</div>
     <div data-out></div>
   </div>`;
 }
-
-function wirePractice(questions, roleId) {
-  app.querySelectorAll("[data-q]").forEach((card) => {
+function wirePractice(root, questions, roleId) {
+  root.querySelectorAll("[data-q]").forEach((card) => {
     const i = +card.dataset.q;
     const ta = card.querySelector("textarea");
     const out = card.querySelector("[data-out]");
@@ -393,9 +606,8 @@ function wirePractice(questions, roleId) {
     card.querySelector("[data-score]").addEventListener("click", (e) =>
       busy(e.currentTarget, async () => {
         if (!ta.value.trim()) return toast("Write or dictate an answer first.");
-        const checks = starCheck(ta.value);
-        let html = `<ul class="small" style="margin:10px 0 0;padding-left:18px">${checks.map((c) => `<li>${c.ok ? "✅" : "⬜"} ${esc(c.t)}</li>`).join("")}</ul>`;
-        if (AI.enabled()) html += `<div class="ai-out small">${esc(await AI.scoreAnswer(questions[i].q, ta.value))}</div>`;
+        let html = `<ul class="checks">${starCheck(ta.value).map((c) => `<li class="${c.ok ? "ok" : ""}">${esc(c.t)}</li>`).join("")}</ul>`;
+        if (AI.enabled()) html += `<div class="ai-out">${esc(await AI.scoreAnswer(questions[i].q, ta.value))}</div>`;
         else html += `<p class="small muted">Add a Claude API key in Settings for detailed feedback.</p>`;
         out.innerHTML = html;
       })
@@ -403,32 +615,24 @@ function wirePractice(questions, roleId) {
     card.querySelector("[data-mic]")?.addEventListener("click", (e) => dictate(ta, e.currentTarget));
   });
 }
-
 function starCheck(ans) {
   const words = ans.trim().split(/\s+/).filter(Boolean).length;
   return [
-    { ok: words >= 60 && words <= 250, t: `Length: ${words} words (aim for 60–250, about 1–2 minutes spoken)` },
+    { ok: words >= 60 && words <= 250, t: `Length: ${words} words (aim for 60–250, about 1–2 minutes)` },
     { ok: /\b(when|while|during|last|this|in 20\d\d)\b/i.test(ans), t: "Situation: sets up when/where it happened" },
-    { ok: /\bI\b/.test(ans), t: "Action: says what YOU did (“I built…”, “I decided…”)" },
+    { ok: /\bI\b/.test(ans), t: "Action: says what YOU did" },
     { ok: /\d/.test(ans), t: "Includes a concrete number" },
-    { ok: /(result|so that|ended up|now|learned|improv|reduc|increas|because of)/i.test(ans), t: "Result: ends with an outcome or what you learned" },
+    { ok: /(result|so that|ended up|now|learned|improv|reduc|increas|because of)/i.test(ans), t: "Result: ends with an outcome or lesson" },
   ];
 }
-
 function dictate(textarea, btn) {
-  if (dictate.rec) {
-    dictate.rec.stop();
-    return;
-  }
+  if (dictate.rec) return dictate.rec.stop();
   const rec = new Speech();
   rec.continuous = true;
-  rec.interimResults = false;
   rec.lang = "en-US";
   const base = textarea.value ? textarea.value.trim() + " " : "";
-  let said = "";
   rec.onresult = (e) => {
-    said = Array.from(e.results).map((r) => r[0].transcript).join(" ");
-    textarea.value = base + said;
+    textarea.value = base + Array.from(e.results).map((r) => r[0].transcript).join(" ");
     textarea.dispatchEvent(new Event("input"));
   };
   rec.onend = () => {
@@ -441,37 +645,33 @@ function dictate(textarea, btn) {
   btn.textContent = "⏹ Stop";
 }
 
-// ---------- other company ----------
+// ---------- add another company ----------
 function openOtherCompany() {
   modalBody.innerHTML = `
-    <div class="spread"><h2 style="margin:0">Add another company</h2><button class="btn ghost" data-close>✕</button></div>
-    <div class="card" style="margin-top:14px">
+    <div class="spread"><h2>Add another company</h2><button class="btn ghost" data-close>✕</button></div>
+    <div class="card">
       <h3>Find roles with AI</h3>
       <p class="small muted">Claude searches the web for real openings and checks whether a 10th grader can apply. ${AI.enabled() ? "" : "<strong>Needs an API key in Settings.</strong>"}</p>
-      <div class="row"><input type="text" id="ai-company" placeholder="e.g. Intuit, Charles Schwab, Scripps Research" style="flex:1;min-width:200px">
-      <button class="btn primary" id="ai-find" ${AI.enabled() ? "" : "disabled"}>Find roles</button></div>
+      <div class="row"><input type="text" id="ai-company" placeholder="e.g. Intuit, Charles Schwab" style="flex:1;min-width:200px"><button class="btn primary" id="ai-find" ${AI.enabled() ? "" : "disabled"}>Find roles</button></div>
     </div>
-    <div class="card" style="margin-top:14px">
+    <div class="card mt-s">
       <h3>Paste a job posting</h3>
-      <p class="small muted">Most accurate option — keywords come from the real posting.</p>
       <label class="field"><span>Company</span><input type="text" id="p-company"></label>
       <label class="field"><span>Role title</span><input type="text" id="p-title"></label>
-      <label class="field"><span>Posting text</span><textarea id="p-text" style="min-height:160px" placeholder="Paste the full posting, including requirements/eligibility"></textarea></label>
+      <label class="field"><span>Posting text</span><textarea id="p-text" style="min-height:150px" placeholder="Paste the full posting, including requirements"></textarea></label>
       <button class="btn primary" id="p-go">Analyze posting</button>
     </div>`;
   if (!modal.open) modal.showModal();
   modalBody.querySelector("[data-close]").onclick = () => modal.close();
-
   modalBody.querySelector("#ai-find").addEventListener("click", (e) =>
     busy(e.currentTarget, async () => {
       const name = modalBody.querySelector("#ai-company").value.trim();
       if (!name) return toast("Type a company name.");
-      const roles = await AI.findRoles(name);
+      const roles = (await AI.findRoles(name)).map((r) => ({ ...r, org: name, field: r.category, kind: "internship", location: r.type, pay: "", deadline: "" }));
       if (!roles.length) return toast(`No verifiable openings found for ${name}.`);
-      saveCustomCompany({ id: "co-" + uid(), name, blurb: "Found by AI web search — verify each link", roles, ai: true });
+      saveCustomCompany({ id: "co-" + uid(), name, blurb: "Found by AI web search", roles, ai: true });
     })
   );
-
   modalBody.querySelector("#p-go").addEventListener("click", (e) =>
     busy(e.currentTarget, async () => {
       const name = modalBody.querySelector("#p-company").value.trim();
@@ -480,23 +680,80 @@ function openOtherCompany() {
       if (!name || !title || text.length < 80) return toast("Fill in company, title, and the full posting.");
       const analysis = analyzePosting(text);
       const keywords = (AI.enabled() && (await AI.postingKeywords(text))) || analysis.keywords;
-      const category = /financ|trading|invest|bank|account/i.test(text) ? "finance" : /python|software|code|program|data|engineer/i.test(text) ? "tech" : "community";
-      const role = { id: "p-" + uid(), title, type: "From pasted posting", category, eligibility: analysis.eligibility, keywords };
-      const existing = Store.get("aiCompanies", []).find((c) => c.name.toLowerCase() === name.toLowerCase());
-      if (existing) {
-        existing.roles.push(role);
-        saveCustomCompany(existing, role.id);
-      } else saveCustomCompany({ id: "co-" + uid(), name, blurb: "Added from a pasted posting", roles: [role], ai: true }, role.id);
+      const field = /financ|trading|invest|bank|account/i.test(text) ? "finance" : /python|software|code|program|data|engineer/i.test(text) ? "tech" : "community";
+      const role = { id: "p-" + uid(), org: name, title, type: "From pasted posting", category: field === "community" ? "community" : field, field, kind: "internship", location: "See posting", pay: "See posting", deadline: "", eligibility: analysis.eligibility, keywords };
+      saveCustomCompany({ id: "co-" + uid(), name, blurb: "Added from a pasted posting", roles: [role], ai: true });
     })
   );
 }
-
-function saveCustomCompany(company, roleId = null) {
-  const list = Store.get("aiCompanies", []).filter((c) => c.id !== company.id);
-  list.push(company);
-  Store.set("aiCompanies", list);
+function saveCustomCompany(company) {
+  Store.set("aiCompanies", [...Store.get("aiCompanies", []), company]);
   modal.close();
-  go("build", { companyId: company.id, roleId });
+  go(`internship/${company.roles[0].id}`);
+}
+
+// ================= COLLEGES =================
+function renderColleges() {
+  const f = state.colFilter;
+  let list = COLLEGES.filter((c) => f.set === "all" || (f.set === "ca" && c.ca) || (f.set === "uc" && c.uc)).map((c) => ({ c, ch: cachedCollegeChance(c) }));
+  list.sort(f.sort === "name" ? (a, b) => a.c.name.localeCompare(b.c.name) : f.sort === "rate" ? (a, b) => a.c.rate - b.c.rate : (a, b) => b.ch.chance - a.ch.chance);
+  const safety = (p) => (p >= 60 ? ["Likely", "good"] : p >= 30 ? ["Target", "accent"] : p >= 12 ? ["Reach", "warn"] : ["High reach", "bad"]);
+
+  app.innerHTML = `
+    <div class="page-head"><div><h1>Colleges</h1><p class="muted">Real admit rates (Class of 2029 / Fall 2025), adjusted for your profile today — and what's possible by senior year.</p></div></div>
+    <div class="card filterbar">
+      <div class="filter-selects">
+        <select id="col-set"><option value="all">All colleges</option><option value="ca" ${f.set === "ca" ? "selected" : ""}>California</option><option value="uc" ${f.set === "uc" ? "selected" : ""}>UC campuses</option></select>
+        <select id="col-sort"><option value="chance">Best chance</option><option value="rate" ${f.sort === "rate" ? "selected" : ""}>Most selective</option><option value="name" ${f.sort === "name" ? "selected" : ""}>A–Z</option></select>
+      </div>
+      <p class="small muted">You're in 10th grade, so these will move a lot. Test scores, rigor, leadership and essays aren't in your data yet.</p>
+    </div>
+    <div class="list">${list
+      .map(({ c, ch }) => {
+        const [lab, tone] = safety(ch.chance);
+        return `<a class="list-row card" href="#college/${c.id}">${ring(ch.chance, { size: 52 })}
+          <div class="grow"><div class="row-title">${esc(c.name)}</div><div class="small muted">${esc(c.location)} · ${esc(c.type)} · ${c.rate}% admit rate</div></div>
+          <div class="row-end"><span class="badge tone-${tone}">${lab}</span><span class="small muted">potential ${ch.potential}%</span><span class="chev">›</span></div></a>`;
+      })
+      .join("")}</div>`;
+  document.getElementById("col-set").addEventListener("change", (e) => ((f.set = e.target.value), renderColleges()));
+  document.getElementById("col-sort").addEventListener("change", (e) => ((f.sort = e.target.value), renderColleges()));
+}
+
+function renderCollege(id) {
+  const c = COLLEGES.find((x) => x.id === id);
+  if (!c) return (app.innerHTML = empty(`College not found. <a href="#colleges">Back</a>`));
+  const ch = cachedCollegeChance(c);
+  const key = c.name.split(" ")[0].toLowerCase();
+  const related = allRoles().filter(({ r }) => (r.org || "").toLowerCase().includes(key) && r.kind === "program");
+
+  app.innerHTML = `
+    <a class="back" href="#colleges">‹ All colleges</a>
+    <div class="detail-head card">
+      <div><div class="eyebrow dark">${esc(c.type)}</div><h1>${esc(c.name)}</h1>
+        <div class="row"><span class="pill">${esc(c.location)}</span><span class="pill">${c.rate}% admit rate</span></div></div>
+      <a class="btn" href="${esc(c.url)}" target="_blank" rel="noopener">Admissions site ↗</a>
+    </div>
+    <div class="detail">
+      <div class="stack">
+        <section class="card"><h2>What it is</h2><p>${esc(c.name)} is a ${esc(c.type.toLowerCase())} school in ${esc(c.location)}. ${esc(c.notes)}</p>
+          <div class="kv"><span>Published admit rate</span><strong>${c.rate}% <span class="muted">(${esc(c.src)})</span></strong></div></section>
+        <section class="card"><h2>How your chance is calculated</h2>
+          ${ch.factors.map((f) => `<div class="factor ${f.good === null ? "" : f.good ? "good" : "weak"}"><span class="dot"></span><div class="grow"><strong>${esc(f.label)}</strong> — ${esc(f.value)}<div class="small muted">${esc(f.note)}</div></div></div>`).join("")}
+          <p class="small muted">Your profile works like ×${ch.multiplier.toFixed(2)} a typical applicant's odds${ch.elite ? " (capped — at sub-10% schools, stats alone move the needle less)" : ""}.</p>
+        </section>
+        <section class="card"><h2>Where to improve</h2><div class="moves">${ch.improve.map((t) => `<div class="move"><span class="tag">Next</span><span>${esc(t)}</span></div>`).join("")}</div></section>
+        ${related.length ? `<section class="card"><h2>Programs from ${esc(c.name.split(" (")[0])} in your list</h2><div class="list compact">${related.map(({ r }) => `<a class="list-row" href="#internship/${r.id}">${ring(cachedChance(r).chance, { size: 40 })}<div class="grow"><div class="row-title">${esc(r.title)}</div><div class="small muted">${esc(r.location)}</div></div>${statusBadge(r.eligibility.status)}</a>`).join("")}</div></section>` : ""}
+      </div>
+      <aside class="chance-card card">
+        ${ring(ch.chance, { size: 140 })}
+        <h3>Your estimated chance</h3>
+        <div class="kv"><span>Admit rate</span><strong>${c.rate}%</strong></div>
+        <div class="kv"><span>You, today</span><strong>${ch.chance}%</strong></div>
+        <div class="kv"><span>Your potential</span><strong class="good-text">${ch.potential}%</strong></div>
+        <p class="small muted">Potential = strong rigor, test scores (where used), leadership and a state/national-level achievement by senior year.</p>
+      </aside>
+    </div>`;
 }
 
 // ================= SKILL BANK =================
@@ -504,46 +761,34 @@ function renderSkills() {
   const bank = getBank();
   const skills = allSkills(bank)
     .filter((s) => state.skillFilter === "all" || s.type === state.skillFilter)
-    .map((s) => ({ s, sc: skillScore(s, bank) }));
+    .map((s) => ({ s, sc: cachedSkillScore(s, bank) }));
   const avg = Math.round(skills.reduce((n, x) => n + x.sc.total, 0) / Math.max(1, skills.length));
-  const ringColor = (t) => (t >= 75 ? "var(--good)" : t >= 50 ? "var(--accent)" : t >= 25 ? "var(--warn)" : "var(--bad)");
+  const tone = (t) => (t >= 70 ? "good" : t >= 45 ? "accent" : t >= 25 ? "warn" : "bad");
 
   app.innerHTML = `
-    <div class="spread">
-      <div><h1 class="page">Skill Bank</h1>
-      <p class="lede">Each score shows how much a skill will actually count on a resume: proof, numbers, demand, and depth. Hit <strong>Improve skill</strong> to answer questions and turn your answers into real bullets.</p></div>
-      <div class="card" style="text-align:center;min-width:130px"><div class="k small muted">Average</div><div class="bigscore">${avg}</div></div>
+    <div class="page-head">
+      <div><h1>Skill Bank</h1><p class="muted">How much each skill actually counts on a resume. Open the coach and it asks one question at a time, digs in with follow-ups, and adds proven bullets to your resume automatically.</p></div>
+      ${ring(avg, { size: 84, label: avg, tone: tone(avg) })}
     </div>
-    <div class="filters">
-      ${["all", "technical", "soft"].map((f) => `<button data-filter="${f}" class="${state.skillFilter === f ? "active" : ""}">${f[0].toUpperCase() + f.slice(1)}</button>`).join("")}
-    </div>
-    <div class="grid">
+    <div class="filters">${["all", "technical", "soft"].map((f) => `<button data-filter="${f}" class="${state.skillFilter === f ? "active" : ""}">${f[0].toUpperCase() + f.slice(1)}</button>`).join("")}</div>
+    <div class="grid cards3">
       ${skills
         .map(
           ({ s, sc }) => `<div class="card skill-card">
-            <div class="spread">
-              <div><h3 style="margin:0">${esc(s.name)}</h3><span class="small muted">${s.type === "soft" ? "Soft skill" : "Technical"}${s.custom ? " · added by you" : ""}</span></div>
-              <div class="ring" style="--p:${sc.total};--c:${ringColor(sc.total)}"><span>${sc.total}</span></div>
-            </div>
+            <div class="spread"><div><h3>${esc(s.name)}</h3><span class="small muted">${s.type === "soft" ? "Soft skill" : "Technical"}${s.custom ? " · added by you" : ""}</span></div>${ring(sc.total, { size: 58, label: sc.total, tone: tone(sc.total) })}</div>
             <div class="small"><strong>${sc.label}.</strong> <span class="muted">${esc(sc.evidenceLabels.length ? "Proof: " + sc.evidenceLabels.join(" · ") : "No proof in your data yet")}</span></div>
-            <div class="row" style="margin-top:auto">
-              <button class="btn primary small" data-improve="${s.id}">Improve skill</button>
-              ${s.custom ? `<button class="btn ghost small" data-remove-skill="${s.id}">Remove</button>` : ""}
-            </div>
+            <div class="row mt-auto"><a class="btn primary small" href="#coach/${s.id}">Improve with coach</a>${s.custom ? `<button class="btn ghost small" data-remove-skill="${s.id}">Remove</button>` : ""}</div>
           </div>`
         )
         .join("")}
-      <div class="card skill-card" style="border-style:dashed">
-        <h3 style="margin:0">+ Add a skill</h3>
-        <p class="small muted" style="margin:0">It starts at zero proof. It only appears on resumes after you answer questions and add a bullet.</p>
+      <div class="card skill-card dashed">
+        <h3>+ Add a skill</h3>
+        <p class="small muted">Starts at zero proof — it only reaches your resume after the coach verifies it.</p>
         <input type="text" id="new-skill" placeholder="e.g. Flask, Public speaking">
-        <div class="row"><select id="new-skill-type" style="width:auto"><option value="technical">Technical</option><option value="soft">Soft</option></select>
-        <button class="btn small" id="add-skill">Add</button></div>
+        <div class="row"><select id="new-skill-type"><option value="technical">Technical</option><option value="soft">Soft</option></select><button class="btn small" id="add-skill">Add</button></div>
       </div>
     </div>`;
-
   app.querySelectorAll("[data-filter]").forEach((b) => b.addEventListener("click", () => ((state.skillFilter = b.dataset.filter), renderSkills())));
-  app.querySelectorAll("[data-improve]").forEach((b) => b.addEventListener("click", () => openImprove(b.dataset.improve)));
   app.querySelectorAll("[data-remove-skill]").forEach((b) =>
     b.addEventListener("click", () => {
       const bank = getBank();
@@ -553,228 +798,297 @@ function renderSkills() {
       renderSkills();
     })
   );
-  app.querySelector("#add-skill").addEventListener("click", () => {
-    const name = app.querySelector("#new-skill").value.trim();
+  document.getElementById("add-skill").addEventListener("click", () => {
+    const name = document.getElementById("new-skill").value.trim();
     if (!name) return;
     const bank = getBank();
     if (allSkills(bank).some((s) => s.name.toLowerCase() === name.toLowerCase())) return toast("That skill is already in your bank.");
-    bank.customSkills.push({ id: "c-" + uid(), name, type: app.querySelector("#new-skill-type").value, evidence: [], custom: true });
+    const skill = { id: "c-" + uid(), name, type: document.getElementById("new-skill-type").value, evidence: [], custom: true };
+    bank.customSkills.push(skill);
     saveBank(bank);
-    renderSkills();
+    go(`coach/${skill.id}`);
   });
 }
 
-function openImprove(skillId) {
+// ---------- coach (one question at a time, adaptive follow-ups, auto-adds bullets) ----------
+function coachState(skillId) {
+  return Object.assign({ thread: [], itemId: null, qi: -1, stage: "pick", followups: 0 }, Store.get("coach", {})[skillId]);
+}
+function saveCoach(skillId, st) {
+  const all = Store.get("coach", {});
+  all[skillId] = st;
+  Store.set("coach", all);
+}
+function itemLabel(id) {
+  return attachableItems().find((i) => i.id === id)?.label || "";
+}
+
+function analyzeAnswer(text) {
+  return {
+    words: text.trim().split(/\s+/).filter(Boolean).length,
+    hasNum: /\d/.test(text),
+    hasI: /\b(I|I'm|I've|I'd|my)\b/.test(text),
+    hasResult: /(result|so that|ended|now |learned|improv|reduc|increas|grew|saved|won|placed|because of|which (led|made|let|helped)|helped)/i.test(text),
+  };
+}
+function heuristicFollowUp(answers) {
+  const a = analyzeAnswer(answers.join(" "));
+  if (a.words < 12) return "Tell me a bit more — walk me through what actually happened.";
+  if (!a.hasI) return "What did you personally do? Try starting with “I …”.";
+  if (!a.hasNum) return "Can you put a real number on it? (how many, how long, how often, how much — only if you know it's true. Say “no number” if there isn't one.)";
+  if (!a.hasResult) return "What changed because of it — what was the result, or what did you learn?";
+  return null;
+}
+
+function renderCoach(skillId) {
   const bank = getBank();
   const skill = allSkills(bank).find((s) => s.id === skillId);
+  if (!skill) return (app.innerHTML = empty(`Skill not found. <a href="#skills">Back</a>`));
   const sc = skillScore(skill, bank);
-  const questions = skillQuestions(skill, bank);
-  const saved = (q) => bank.answers.find((a) => a.skillId === skillId && a.question === q);
-  const lastItem = [...bank.answers].reverse().find((a) => a.skillId === skillId && a.itemId)?.itemId || "";
+  const st = coachState(skillId);
+  if (!st.thread.length) {
+    st.thread.push({ from: "coach", text: `Let's build real proof for ${skill.name}. I'll ask one question at a time and dig in where it helps. Which experience is it from?` });
+    saveCoach(skillId, st);
+  }
   const bullets = bank.bullets.filter((b) => b.skillId === skillId);
   const items = attachableItems();
 
-  modalBody.innerHTML = `
-    <div class="spread">
-      <div><h2 style="margin:0">Improve: ${esc(skill.name)}</h2><div class="small muted">Score ${sc.total}/100 · ${sc.label}</div></div>
-      <button class="btn ghost" data-close>✕</button>
-    </div>
-
-    <div class="card" style="margin-top:14px">
-      ${sc.parts.map((p) => `<div style="margin-bottom:8px"><div class="spread small"><strong>${p.name}</strong><span>${p.pts}/${p.max}</span></div>
-        <div class="bar"><i style="width:${(p.pts / p.max) * 100}%"></i></div><div class="small muted">${esc(p.note)}</div></div>`).join("")}
-      ${sc.tips.length ? `<ul class="small" style="margin:8px 0 0;padding-left:18px">${sc.tips.map((t) => `<li>${esc(t)}</li>`).join("")}</ul>` : ""}
-    </div>
-
-    <h3 style="margin-top:18px">1. Answer in your own words</h3>
-    <p class="small muted" style="margin-top:0">Only write what really happened. Your answers become verified data the app can use. Skip any question that doesn't fit.</p>
-    <label class="field"><span>Which experience are these answers about?</span>
-      <select id="item-select">
-        <option value="">— Interview story only (not for the resume) —</option>
-        ${items.map((i) => `<option value="${i.id}" ${i.id === lastItem ? "selected" : ""}>${esc(i.label)}</option>`).join("")}
-      </select></label>
-    <div id="qa-list">${questions
-      .map((q, i) => `<div class="qa"><div class="q">${esc(q)}</div><textarea data-qi="${i}">${esc(saved(q)?.answer || "")}</textarea></div>`)
-      .join("")}</div>
-    <div class="row" style="margin-top:12px">
-      <button class="btn primary" id="save-answers">Save answers</button>
-      <button class="btn" id="more-q" ${AI.enabled() ? "" : 'disabled title="Add an API key in Settings"'}>✨ Generate more questions</button>
-    </div>
-
-    <h3 style="margin-top:22px">2. Turn it into a resume bullet</h3>
-    <p class="small muted" style="margin-top:0">Numbers in a bullet must already appear in your answers or your data block. Otherwise it won't be added.</p>
-    <textarea id="bullet-text" placeholder="Action verb + what you did + result, e.g. “Cut backtest runtime from … to … by …”"></textarea>
-    <div class="row" style="margin-top:8px">
-      <button class="btn" id="draft" ${AI.enabled() ? "" : 'disabled title="Add an API key in Settings"'}>✨ Draft from my answers</button>
-      <button class="btn primary" id="add-bullet">Add to resume</button>
-    </div>
-    <div id="draft-note"></div>
-
-    ${
-      bullets.length
-        ? `<h3 style="margin-top:22px">On your resume from this skill</h3>
-      <div class="stack">${bullets
-        .map((b) => `<div class="card spread small"><div>${esc(b.text)}<div class="muted">Under: ${esc(items.find((i) => i.id === b.itemId)?.label || b.itemId)}${b.aiDrafted ? " · AI-drafted, approved by you" : ""}</div></div>
-        <button class="btn ghost small" data-del-bullet="${b.id}">Remove</button></div>`)
-        .join("")}</div>`
-        : ""
-    }`;
-  if (!modal.open) modal.showModal();
-
-  const $ = (s) => modalBody.querySelector(s);
-  $("[data-close]").onclick = () => modal.close();
-
-  const collect = () => {
-    const itemId = $("#item-select").value;
-    return questions.map((q, i) => ({ question: q, answer: modalBody.querySelector(`[data-qi="${i}"]`).value.trim(), itemId }));
-  };
-  const persist = () => {
-    const b = getBank();
-    for (const qa of collect()) {
-      const existing = b.answers.find((a) => a.skillId === skillId && a.question === qa.question);
-      if (existing) Object.assign(existing, { answer: qa.answer, itemId: qa.itemId, ts: Date.now() });
-      else if (qa.answer) b.answers.push({ id: uid(), skillId, ...qa, ts: Date.now() });
-    }
-    b.answers = b.answers.filter((a) => a.answer);
-    saveBank(b);
-  };
-
-  $("#save-answers").addEventListener("click", () => {
-    persist();
-    toast("Answers saved.");
-    openImprove(skillId);
-  });
-
-  $("#more-q").addEventListener("click", (e) =>
-    busy(e.currentTarget, async () => {
-      persist();
-      const more = await AI.skillQuestions(skill, questions);
-      if (!more.length) return toast("Couldn't generate questions — try again.");
-      const b = getBank();
-      b.genQuestions[skillId] = [...(b.genQuestions[skillId] || []), ...more];
-      saveBank(b);
-      openImprove(skillId);
-      toast(`Added ${more.length} questions.`);
-    })
-  );
-
-  $("#draft").addEventListener("click", (e) =>
-    busy(e.currentTarget, async () => {
-      const qa = collect().filter((x) => x.answer);
-      const itemId = $("#item-select").value;
-      if (!itemId) return toast("Pick which experience this is about first.");
-      if (!qa.length) return toast("Answer at least one question first.");
-      persist();
-      const draft = await AI.draftBullet(skill, items.find((i) => i.id === itemId).label, qa);
-      if (draft.startsWith("NOT ENOUGH INFO")) {
-        $("#draft-note").innerHTML = `<div class="notice warn" style="margin-top:8px">${esc(draft)}</div>`;
-        return;
-      }
-      $("#bullet-text").value = draft.replace(/^[-•]\s*/, "");
-      $("#bullet-text").dataset.ai = "1";
-      $("#draft-note").innerHTML = `<p class="small muted">Draft only — edit it until every word is true, then add it.</p>`;
-    })
-  );
-
-  $("#add-bullet").addEventListener("click", () => {
-    const text = $("#bullet-text").value.trim().replace(/^[-•]\s*/, "").replace(/\.$/, "");
-    const itemId = $("#item-select").value;
-    if (!text) return toast("Write a bullet first.");
-    if (!itemId) return toast("Pick which experience this bullet belongs under.");
-    persist();
-    const unverified = unverifiedNumbers(text, skillId, itemId);
-    if (unverified.length) {
-      $("#draft-note").innerHTML = `<div class="notice bad" style="margin-top:8px">Not added: ${unverified.map((n) => `“${esc(n)}”`).join(", ")} ${unverified.length > 1 ? "aren't" : "isn't"} in your answers or data block. Put the real number in an answer first so it's verified.</div>`;
-      return;
-    }
-    const b = getBank();
-    b.bullets.push({ id: uid(), skillId, itemId, text, aiDrafted: $("#bullet-text").dataset.ai === "1", ts: Date.now() });
-    saveBank(b);
-    toast("Added to your resume.");
-    openImprove(skillId);
-  });
-
-  modalBody.querySelectorAll("[data-del-bullet]").forEach((btn) =>
-    btn.addEventListener("click", () => {
-      const b = getBank();
-      b.bullets = b.bullets.filter((x) => x.id !== btn.dataset.delBullet);
-      saveBank(b);
-      openImprove(skillId);
-    })
-  );
-}
-
-// Anti-inflation check: every number in a new bullet must already exist in Mason's answers or the data block.
-function unverifiedNumbers(text, skillId, itemId) {
-  const bank = getBank();
-  const norm = (s) => s.replace(/,/g, "");
-  const source = norm(
-    [...bank.answers.filter((a) => a.skillId === skillId || a.itemId === itemId).map((a) => a.answer), (itemIndex()[itemId] || {}).text || ""].join(" ")
-  );
-  const nums = norm(text).match(/\d+(\.\d+)?/g) || [];
-  return [...new Set(nums)].filter((n) => !new RegExp("(?<![\\d.])" + n.replace(".", "\\.") + "(?![\\d])").test(source));
-}
-
-// ================= MASTER =================
-function renderMaster() {
-  const bank = getBank();
-  const resume = buildResume(null, bank, getSettings());
-  const score = scoreResume(resume, null);
-  const flags = thinFlags(bank);
   app.innerHTML = `
-    <h1 class="page">Master resume</h1>
-    <p class="lede">Everything verified, in one place. Tailored versions reorder this for each role. Nothing gets added.</p>
-    ${getSettings().phone ? "" : `<div class="notice info">Your phone number isn't on the resume yet. Add it in Settings (it's saved only in this browser, not in the public repo).</div>`}
-    <div class="result">
-      <div class="stack">${resumeActions()}<div class="paper">${resumeToHTML(resume)}</div></div>
-      <div class="stack">
-        <div class="card"><div class="k small muted">Overall</div><div class="bigscore">${score.total}<span class="muted" style="font-size:16px">/100</span></div><div class="small">${score.verdict}</div></div>
-        ${rubricCard(score)}
-        <div class="card"><h3>Weak spots recruiters will notice</h3>
-          <ul class="small" style="padding-left:18px;margin:0">${flags.map((f) => `<li style="margin-bottom:6px">${esc(f)}</li>`).join("")}</ul>
-          <button class="btn small" style="margin-top:10px" id="to-skills">Fix in Skill Bank →</button></div>
-      </div>
+    <a class="back" href="#skills">‹ Skill Bank</a>
+    <div class="coach">
+      <aside class="card coach-side">
+        ${ring(sc.total, { size: 110, label: sc.total, tone: sc.total >= 70 ? "good" : sc.total >= 45 ? "accent" : sc.total >= 25 ? "warn" : "bad" })}
+        <h2>${esc(skill.name)}</h2><div class="small muted">${sc.label}</div>
+        ${sc.parts.map((p) => `<div class="rubric-row"><div class="spread small"><strong>${p.name}</strong><span>${p.pts}/${p.max}</span></div><div class="bar"><i style="width:${(p.pts / p.max) * 100}%"></i></div></div>`).join("")}
+        ${bullets.length ? `<h4>On your resume</h4>${bullets.map((b) => `<div class="mini-bullet">${esc(b.text)} <button class="linkbtn" data-undo="${b.id}">remove</button></div>`).join("")}` : ""}
+        <button class="btn ghost small" id="reset-coach">Start over</button>
+      </aside>
+      <section class="card chat">
+        <div class="thread" id="thread">${st.thread
+          .map((m) => `<div class="msg ${m.from}">${esc(m.text)}${m.bulletId ? ` <button class="linkbtn" data-undo="${m.bulletId}">Undo</button>` : ""}</div>`)
+          .join("")}</div>
+        <div class="composer">
+          ${
+            st.stage === "pick"
+              ? `<div class="chips">${items.map((i) => `<button class="chip pick" data-item="${i.id}">${esc(i.label)}</button>`).join("")}<button class="chip pick" data-item="">Not on my resume — just an interview story</button></div>`
+              : st.stage === "done"
+                ? `<p class="small muted">That's every question for now. <button class="linkbtn" id="more-q">${AI.enabled() ? "Generate new questions" : "Start over with another experience"}</button></p>`
+                : `<textarea id="answer" placeholder="${st.stage === "bullet" ? "One resume line: strong verb + what you did + the number/result" : "Type your answer…"}"></textarea>
+                   <div class="row"><button class="btn primary" id="send">Send</button><button class="btn ghost small" id="skip">Skip question</button><button class="btn ghost small" id="switch">Switch experience</button>${Speech ? `<button class="btn ghost small" id="mic">🎤</button>` : ""}</div>`
+          }
+        </div>
+      </section>
     </div>`;
-  wireResumeActions(resume, "Master");
-  app.querySelector("#to-skills").addEventListener("click", () => go("skills"));
+
+  const thread = document.getElementById("thread");
+  thread.scrollTop = thread.scrollHeight;
+  app.querySelectorAll("[data-undo]").forEach((b) =>
+    b.addEventListener("click", () => {
+      const bk = getBank();
+      bk.bullets = bk.bullets.filter((x) => x.id !== b.dataset.undo);
+      saveBank(bk);
+      toast("Removed from your resume.");
+      renderCoach(skillId);
+    })
+  );
+  document.getElementById("reset-coach").addEventListener("click", () => {
+    saveCoach(skillId, { thread: [], itemId: null, qi: -1, stage: "pick", followups: 0 });
+    renderCoach(skillId);
+  });
+  app.querySelectorAll("[data-item]").forEach((b) =>
+    b.addEventListener("click", () => {
+      st.itemId = b.dataset.item || "";
+      st.thread.push({ from: "me", text: b.textContent });
+      askNext(skill, st);
+      saveCoach(skillId, st);
+      renderCoach(skillId);
+    })
+  );
+  document.getElementById("more-q")?.addEventListener("click", (e) =>
+    busy(e.currentTarget, async () => {
+      if (AI.enabled()) {
+        const more = await AI.skillQuestions(skill, skillQuestions(skill, getBank()));
+        const bk = getBank();
+        bk.genQuestions[skillId] = [...(bk.genQuestions[skillId] || []), ...more];
+        saveBank(bk);
+        st.stage = "answer";
+        askNext(skill, st);
+      } else Object.assign(st, { stage: "pick", qi: -1, thread: [...st.thread, { from: "coach", text: "Pick another experience and we'll go again." }] });
+      saveCoach(skillId, st);
+      renderCoach(skillId);
+    })
+  );
+  document.getElementById("skip")?.addEventListener("click", () => {
+    st.thread.push({ from: "coach", text: "No problem — different angle." });
+    askNext(skill, st);
+    saveCoach(skillId, st);
+    renderCoach(skillId);
+  });
+  document.getElementById("switch")?.addEventListener("click", () => {
+    Object.assign(st, { stage: "pick" });
+    st.thread.push({ from: "coach", text: "Sure — which experience instead?" });
+    saveCoach(skillId, st);
+    renderCoach(skillId);
+  });
+  const ta = document.getElementById("answer");
+  document.getElementById("mic")?.addEventListener("click", (e) => dictate(ta, e.currentTarget));
+  ta?.addEventListener("keydown", (e) => {
+    if (e.key === "Enter" && !e.shiftKey) {
+      e.preventDefault();
+      document.getElementById("send").click();
+    }
+  });
+  document.getElementById("send")?.addEventListener("click", (e) =>
+    busy(e.currentTarget, async () => {
+      const text = ta.value.trim();
+      if (!text) return;
+      await coachReply(skill, st, text);
+      saveCoach(skillId, st);
+      renderCoach(skillId);
+      document.getElementById("answer")?.focus();
+    })
+  );
+}
+
+function askNext(skill, st) {
+  const qs = skillQuestions(skill, getBank());
+  const answered = new Set(getBank().answers.filter((a) => a.skillId === skill.id && a.itemId === (st.itemId || "")).map((a) => a.question));
+  let i = st.qi + 1;
+  while (i < qs.length && answered.has(qs[i])) i++;
+  if (i >= qs.length) {
+    st.stage = "done";
+    st.thread.push({ from: "coach", text: `That covers every question for ${skill.name} with this experience. Your score updates on the left.` });
+    return;
+  }
+  Object.assign(st, { qi: i, stage: "answer", followups: 0, currentQ: qs[i] });
+  st.thread.push({ from: "coach", text: qs[i] });
+}
+
+function addBulletFromCoach(skill, st, text) {
+  const bank = getBank();
+  const source = bank.answers.filter((a) => a.skillId === skill.id).map((a) => a.answer).join(" ") + " " + (itemIndex()[st.itemId]?.text || "");
+  const bad = numbersNotIn(text, source);
+  if (bad.length) return { ok: false, msg: `I can't add that — ${bad.map((n) => `“${n}”`).join(", ")} isn't in anything you told me. Tell me the real number first, or rewrite the line without it.` };
+  const b = { id: uid(), skillId: skill.id, itemId: st.itemId, text: text.replace(/^[-•]\s*/, "").replace(/\.$/, ""), ts: Date.now() };
+  bank.bullets.push(b);
+  saveBank(bank);
+  return { ok: true, b };
+}
+
+async function coachReply(skill, st, text) {
+  st.thread.push({ from: "me", text });
+
+  if (st.stage === "bullet") {
+    if (/^(i|it|my|we|this|that)\b/i.test(text) || text.split(/\s+/).length < 5)
+      return st.thread.push({ from: "coach", text: "Resume lines skip “I” and start with an action verb — like “Compared…”, “Built…”, “Tested…”. Give it one more try (at least 5 words)." });
+    const r = addBulletFromCoach(skill, st, text);
+    if (!r.ok) return st.thread.push({ from: "coach", text: r.msg });
+    st.thread.push({ from: "coach", text: `✅ Added to your resume under ${itemLabel(st.itemId)}.`, bulletId: r.b.id });
+    return askNext(skill, st);
+  }
+
+  // Save every answer automatically (the Skill Bank's verified source of truth).
+  const bank = getBank();
+  bank.answers.push({ id: uid(), skillId: skill.id, question: st.currentQ, answer: text, itemId: st.itemId || "", ts: Date.now() });
+  saveBank(bank);
+  st.followups++;
+  const answersThisQ = getBank().answers.filter((a) => a.skillId === skill.id && a.question === st.currentQ).map((a) => a.answer);
+
+  if (AI.enabled()) {
+    const r = await AI.coachTurn(skill, itemLabel(st.itemId), st.thread.slice(-16));
+    if (r.bullet && st.itemId) {
+      const added = addBulletFromCoach(skill, st, r.bullet);
+      if (added.ok) st.thread.push({ from: "coach", text: `✅ Added to your resume: “${added.b.text}”`, bulletId: added.b.id });
+    }
+    if (r.done || st.followups >= 4) {
+      if (r.reply && !r.bullet) st.thread.push({ from: "coach", text: r.reply });
+      return askNext(skill, st);
+    }
+    return st.thread.push({ from: "coach", text: r.reply });
+  }
+
+  const follow = /^(no number|none|idk|i don'?t know|not sure)/i.test(text) ? null : heuristicFollowUp(answersThisQ);
+  if (follow && st.followups < 4) return st.thread.push({ from: "coach", text: follow });
+  if (!st.itemId) {
+    st.thread.push({ from: "coach", text: "Saved as an interview story. Next question —" });
+    return askNext(skill, st);
+  }
+  st.stage = "bullet";
+  st.thread.push({ from: "coach", text: `That area's solid. Sum it up as one resume line for ${itemLabel(st.itemId)} — strong verb + what you did + the number/result. I'll check it against what you said and add it.` });
+}
+
+// ================= RESUMES =================
+function renderResumes() {
+  const bank = getBank();
+  const master = buildResume(null, bank, getSettings());
+  const ms = scoreResume(master, null);
+  const saved = Store.get("resumes", []);
+  app.innerHTML = `
+    <div class="page-head"><div><h1>Resumes</h1><p class="muted">Your master resume plus every tailored version you've saved.</p></div></div>
+    ${getSettings().phone ? "" : `<div class="notice info">Your phone number isn't on resumes yet — add it in <a href="#settings">Settings</a> (saved only in this browser).</div>`}
+    <div class="list">
+      <a class="list-row card" href="#resume/master">${ring(ms.total, { size: 52, label: ms.total, tone: chanceTone(ms.total) })}<div class="grow"><div class="row-title">Master resume</div><div class="small muted">Everything verified, in one place</div></div><span class="chev">›</span></a>
+      ${saved.map((s) => `<a class="list-row card" href="#resume/${s.id}">${ring(s.score, { size: 52, label: s.score, tone: chanceTone(s.score) })}<div class="grow"><div class="row-title">${esc(s.name)}</div><div class="small muted">Saved ${esc(s.date)}</div></div><span class="chev">›</span></a>`).join("")}
+    </div>
+    ${saved.length ? "" : `<p class="muted small mt">Tailored resumes you save from an internship page show up here.</p>`}
+    <section class="card mt"><h2>Weak spots recruiters will notice</h2><div class="moves">${thinFlags(bank).map((f) => `<a class="move" href="#skills"><span class="tag">Fix</span><span>${esc(f)}</span><span class="chev">›</span></a>`).join("")}</div></section>`;
+}
+
+function renderResumeView(id) {
+  const bank = getBank();
+  let resume, name, score, role;
+  if (id === "master") {
+    resume = buildResume(null, bank, getSettings());
+    name = "Master";
+    score = scoreResume(resume, null);
+  } else {
+    const s = Store.get("resumes", []).find((x) => x.id === id);
+    if (!s) return (app.innerHTML = empty(`Resume not found. <a href="#resumes">Back</a>`));
+    resume = s.resume;
+    name = s.name;
+    role = findRole(s.roleId)?.r;
+    score = scoreResume(resume, role || null);
+  }
+  app.innerHTML = `
+    <a class="back" href="#resumes">‹ Resumes</a>
+    <div class="page-head"><div><h1>${esc(name)} resume</h1></div>${id !== "master" ? `<button class="btn ghost" id="del">Delete</button>` : ""}</div>
+    <div class="result">
+      <div class="stack"><div class="row"><button class="btn primary" data-act="print">Save as PDF</button><button class="btn" data-act="copy">Copy text</button><button class="btn" data-act="txt">Download .txt</button></div>
+        <div class="paper">${resumeToHTML(resume)}</div></div>
+      <div class="stack">${rubricCard(score)}</div>
+    </div>`;
+  wireResumeActions(app, resume, name, score, role);
+  document.getElementById("del")?.addEventListener("click", () => {
+    Store.set("resumes", Store.get("resumes", []).filter((x) => x.id !== id));
+    go("resumes");
+  });
 }
 
 // ================= SETTINGS =================
 function renderSettings() {
   const s = getSettings();
   app.innerHTML = `
-    <h1 class="page">Settings</h1>
-    <p class="lede">Everything here is saved only in this browser. None of it goes into the GitHub repo.</p>
-    <div class="grid" style="grid-template-columns:repeat(auto-fit,minmax(320px,1fr))">
-      <div class="card">
-        <h3>Contact</h3>
+    <div class="page-head"><div><h1>Settings</h1><p class="muted">Everything here stays in this browser — none of it goes into the GitHub repo.</p></div></div>
+    <div class="grid cards2">
+      <div class="card"><h3>Contact</h3>
         <label class="field"><span>Phone (printed on resumes)</span><input type="tel" id="phone" value="${esc(s.phone)}" placeholder="(415) 000-0000"></label>
-        <button class="btn primary" id="save-contact">Save</button>
-      </div>
-      <div class="card">
-        <h3>AI features (optional)</h3>
-        <p class="small muted">Powers “Find roles”, “Generate more questions”, “Draft bullet”, and answer feedback. Get a key at console.anthropic.com. Each use costs a little on your Anthropic account.</p>
+        <button class="btn primary" id="save-contact">Save</button></div>
+      <div class="card"><h3>AI features</h3>
+        <p class="small muted">Unlocks live role research, keyword rewording, the adaptive coach, "Find roles" and answer feedback. Get a key at console.anthropic.com — each use costs a little on your Anthropic account.</p>
         <label class="field"><span>Claude API key</span><input type="password" id="apikey" value="${esc(s.apiKey)}" placeholder="sk-ant-…" autocomplete="off"></label>
         <label class="field"><span>Model</span><select id="model">
           <option value="claude-opus-5" ${s.model === "claude-opus-5" ? "selected" : ""}>Claude Opus 5 (best quality)</option>
-          <option value="claude-sonnet-5" ${s.model === "claude-sonnet-5" ? "selected" : ""}>Claude Sonnet 5 (cheaper)</option>
-        </select></label>
+          <option value="claude-sonnet-5" ${s.model === "claude-sonnet-5" ? "selected" : ""}>Claude Sonnet 5 (cheaper)</option></select></label>
         <div class="row"><button class="btn primary" id="save-ai">Save</button><button class="btn" id="test-ai">Test key</button></div>
-        <p class="small muted" style="margin-bottom:0">Only use this on your own device. Anyone using this browser could see the key.</p>
-      </div>
-      <div class="card">
-        <h3>Backup</h3>
-        <p class="small muted">Your Skill Bank answers and bullets live in this browser. Export them to move to another device.</p>
-        <div class="row">
-          <button class="btn" id="export">Export backup</button>
-          <label class="btn">Import backup<input type="file" id="import" accept="application/json" hidden></label>
-        </div>
-        <hr style="border:0;border-top:1px solid var(--border);margin:16px 0">
-        <button class="btn" id="reset" style="color:var(--bad)">Erase all saved data…</button>
-      </div>
+        <p class="small muted">Only use this on your own device.</p></div>
+      <div class="card"><h3>Backup</h3>
+        <p class="small muted">Skill Bank answers, coach chats and saved resumes live in this browser. Export to move them to another device.</p>
+        <div class="row"><button class="btn" id="export">Export backup</button><label class="btn">Import backup<input type="file" id="import" accept="application/json" hidden></label></div>
+        <hr><button class="btn danger" id="reset">Erase all saved data…</button></div>
     </div>`;
   const $ = (id) => document.getElementById(id);
   const save = (patch) => Store.set("settings", { ...getSettings(), ...patch });
+  const KEYS = ["bank", "aiCompanies", "practice", "coach", "resumes", "research"];
   $("save-contact").onclick = () => (save({ phone: $("phone").value.trim() }), toast("Saved."));
   $("save-ai").onclick = () => (save({ apiKey: $("apikey").value.trim(), model: $("model").value }), toast("Saved."));
   $("test-ai").onclick = (e) =>
@@ -784,39 +1098,30 @@ function renderSettings() {
       toast("Key works ✓");
     });
   $("export").onclick = () => {
-    const data = { bank: getBank(), aiCompanies: Store.get("aiCompanies", []), practice: Store.get("practice", {}), phone: getSettings().phone };
+    const data = Object.fromEntries(KEYS.map((k) => [k, Store.get(k, null)]));
+    data.phone = getSettings().phone;
     const a = document.createElement("a");
     a.href = URL.createObjectURL(new Blob([JSON.stringify(data, null, 2)], { type: "application/json" }));
-    a.download = "resume-builder-backup.json";
+    a.download = "launchpad-backup.json";
     a.click();
   };
   $("import").onchange = async (e) => {
     try {
       const data = JSON.parse(await e.target.files[0].text());
-      if (data.bank) saveBank(data.bank);
-      if (data.aiCompanies) Store.set("aiCompanies", data.aiCompanies);
-      if (data.practice) Store.set("practice", data.practice);
+      KEYS.forEach((k) => data[k] != null && Store.set(k, data[k]));
       if (data.phone) save({ phone: data.phone });
       toast("Backup restored.");
-      renderSettings();
     } catch {
       toast("That file isn't a valid backup.");
     }
   };
   $("reset").onclick = () => {
-    if (!confirm("Erase all Skill Bank answers, bullets, added companies, practice answers, and settings from this browser?")) return;
-    ["bank", "aiCompanies", "practice", "settings"].forEach((k) => localStorage.removeItem("rb." + k));
+    if (!confirm("Erase all Skill Bank answers, coach chats, saved resumes, added companies and settings from this browser?")) return;
+    [...KEYS, "settings"].forEach((k) => localStorage.removeItem("rb." + k));
     toast("Erased.");
     renderSettings();
   };
 }
 
 // ================= boot =================
-document.getElementById("tabs").addEventListener("click", (e) => {
-  const v = e.target.closest("button")?.dataset.view;
-  if (v) go(v, v === "build" ? { companyId: null, roleId: null } : {});
-});
-modal.addEventListener("close", () => state.view === "skills" && renderSkills());
-const initial = location.hash.slice(1);
-if (["build", "skills", "master", "settings"].includes(initial)) state.view = initial;
-render();
+route();

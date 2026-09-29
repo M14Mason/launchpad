@@ -155,3 +155,68 @@ POSTING:
     return ks.map((k) => ({ term: String(k.term), any: (k.any || [k.term]).map((a) => String(a).toLowerCase()), req: !!k.required }));
   },
 };
+
+Object.assign(AI, {
+  // Live web research on one role/program. Cached per role so it only costs once.
+  async researchRole(role) {
+    const cache = Store.get("research", {});
+    if (cache[role.id]) return cache[role.id];
+    const text = await this.ask(
+      `Research this opportunity on the web (official page first): "${role.org || ""} — ${role.title}"${role.url ? ` (official page: ${role.url})` : ""}.
+Return ONLY JSON:
+{"summary": "3-5 sentences: what it is, what participants actually do, length, pay/cost",
+ "lookFor": ["3-6 things selectors say they want"],
+ "keywords": [{"term": str, "any": [lowercase ATS synonyms], "required": bool}] (6-10 skills/traits it screens for),
+ "opens": "when applications open, or empty", "closes": "deadline, or empty",
+ "acceptance": "published acceptance rate or cohort/applicant numbers with year, or empty — never estimate",
+ "tips": ["2-4 concrete application tips"],
+ "sources": ["urls you used"]}
+Only include facts you found. Leave fields empty rather than guessing.`,
+      { effort: "medium", maxTokens: 16000, webSearch: true }
+    );
+    const r = this.parseJSON(text, null);
+    if (!r || typeof r !== "object" || Array.isArray(r)) throw new Error("Research came back in an unexpected format — try again.");
+    r.keywords = (r.keywords || []).map((k) => ({ term: String(k.term), any: (k.any && k.any.length ? k.any : [k.term]).map((a) => String(a).toLowerCase()), req: !!k.required }));
+    r.at = Date.now();
+    cache[role.id] = r;
+    Store.set("research", cache);
+    return r;
+  },
+
+  // Reword bullets to front-load what the role screens for — same facts, same numbers.
+  async tailorBullets(role, research, bullets, allowed) {
+    const text = await this.ask(
+      `Tailor these resume bullets for: ${role.org || ""} — ${role.title}.
+What they screen for: ${(research?.lookFor || []).join("; ") || role.keywords.map((k) => k.term).join(", ")}.
+Rules — break any and the line is thrown out automatically:
+- Keep every fact and every number exactly; do not add results, scope, tools, or skills that aren't in the original line.
+- You MAY reorder, tighten, choose a stronger truthful verb, and use these descriptive terms only where the original line clearly describes that activity: ${allowed.join(", ") || "(none)"}.
+- Max 28 words, no period at the end. Leave a line unchanged if it can't be improved honestly.
+Return ONLY a JSON array of {"i": index, "text": "new line"} for lines you changed.
+
+${bullets.map((b, i) => `${i}. ${b}`).join("\n")}`,
+      { effort: "medium" }
+    );
+    const out = this.parseJSON(text, []);
+    return Array.isArray(out) ? out.filter((x) => Number.isInteger(x.i) && typeof x.text === "string") : [];
+  },
+
+  // One coaching turn: decide whether to dig deeper, move on, and/or write a bullet from Mason's own words.
+  async coachTurn(skill, itemLabel, thread) {
+    const text = await this.ask(
+      `You're coaching Mason to prove the skill "${skill.name}"${itemLabel ? ` using: ${itemLabel}` : ""}.
+Conversation so far (coach = you, me = Mason):
+${thread.map((m) => `${m.from}: ${m.text}`).join("\n")}
+
+Decide the next step:
+- If his latest answer is vague, missing what HE did, missing a verifiable number, or missing the result, ask ONE short, specific follow-up about that gap.
+- If this area is now well-proven, write ONE resume bullet (max 25 words, strong verb, no period) using ONLY facts he stated — never add numbers or claims — and set done=true.
+- If he says he doesn't know / has nothing more, set done=true and bullet="" (don't invent anything).
+Return ONLY JSON: {"reply": "your next message (a follow-up question, or a short 1-sentence acknowledgment if done)", "done": bool, "bullet": "resume line or empty"}`,
+      { effort: "low" }
+    );
+    const r = this.parseJSON(text, null);
+    if (!r || typeof r.reply !== "string") throw new Error("The coach's reply came back in an unexpected format.");
+    return { reply: r.reply, done: !!r.done, bullet: typeof r.bullet === "string" ? r.bullet.trim().replace(/\.$/, "") : "" };
+  },
+});

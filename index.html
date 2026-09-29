@@ -3,29 +3,32 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Resume Builder — Mason Ngo</title>
+  <title>Launchpad — Mason Ngo</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
-  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="css/style.css">
 </head>
 <body>
-  <header class="topbar">
-    <div class="brand">
-      <span class="logo">MN</span>
-      <div>
-        <div class="brand-title">Resume Builder</div>
-        <div class="brand-sub">Verified data only · no hallucination</div>
-      </div>
-    </div>
-    <nav class="tabs" id="tabs">
-      <button data-view="build">Build</button>
-      <button data-view="skills">Skill Bank</button>
-      <button data-view="master">Master Resume</button>
-      <button data-view="settings">Settings</button>
-    </nav>
-  </header>
-
-  <main id="app"></main>
+  <div class="shell">
+    <aside class="sidebar">
+      <a class="brand" href="#dashboard">
+        <span class="logo" aria-hidden="true">
+          <svg viewBox="0 0 32 32" width="32" height="32"><defs><linearGradient id="lg" x1="0" y1="1" x2="1" y2="0"><stop offset="0" stop-color="#2563eb"/><stop offset="1" stop-color="#7c3aed"/></linearGradient></defs><rect width="32" height="32" rx="9" fill="url(#lg)"/><path d="M9 21l5-5 3.5 3.5L23 12" stroke="#fff" stroke-width="2.6" fill="none" stroke-linecap="round" stroke-linejoin="round"/><path d="M18.5 12H23v4.5" stroke="#fff" stroke-width="2.6" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg>
+        </span>
+        <span><span class="brand-title">Launchpad</span><span class="brand-sub">Verified data · no hallucination</span></span>
+      </a>
+      <nav id="nav">
+        <a href="#dashboard" data-nav="dashboard"><svg viewBox="0 0 24 24"><path d="M4 13h6V4H4zm0 7h6v-5H4zm10 0h6v-9h-6zm0-16v5h6V4z"/></svg>Dashboard</a>
+        <a href="#internships" data-nav="internships"><svg viewBox="0 0 24 24"><path d="M10 4h4a2 2 0 012 2v1h3a2 2 0 012 2v9a2 2 0 01-2 2H5a2 2 0 01-2-2V9a2 2 0 012-2h3V6a2 2 0 012-2zm0 3h4V6h-4z"/></svg>Internships</a>
+        <a href="#colleges" data-nav="colleges"><svg viewBox="0 0 24 24"><path d="M12 3L1 9l11 6 9-4.9V17h2V9zm-7 9.2V16l7 4 7-4v-3.8L12 16z"/></svg>Colleges</a>
+        <a href="#skills" data-nav="skills"><svg viewBox="0 0 24 24"><path d="M12 2l2.9 6.3 6.9.7-5.2 4.6 1.5 6.8L12 17l-6.1 3.4 1.5-6.8L2.2 9l6.9-.7z"/></svg>Skill Bank</a>
+        <a href="#resumes" data-nav="resumes"><svg viewBox="0 0 24 24"><path d="M6 2h9l5 5v13a2 2 0 01-2 2H6a2 2 0 01-2-2V4a2 2 0 012-2zm8 1.5V8h4.5zM8 12v2h8v-2zm0 4v2h8v-2z"/></svg>Resumes</a>
+        <a href="#settings" data-nav="settings"><svg viewBox="0 0 24 24"><path d="M19.4 13a7.5 7.5 0 000-2l2.1-1.6-2-3.5-2.5 1a7 7 0 00-1.7-1L15 3.3h-4l-.4 2.6a7 7 0 00-1.7 1l-2.5-1-2 3.5L6.6 11a7.5 7.5 0 000 2l-2.1 1.6 2 3.5 2.5-1a7 7 0 001.7 1l.3 2.6h4l.4-2.6a7 7 0 001.7-1l2.5 1 2-3.5zM13 15.5a3.5 3.5 0 110-7 3.5 3.5 0 010 7z"/></svg>Settings</a>
+      </nav>
+      <div class="sidebar-foot">Every line comes from your verified data. Chances are estimates built on real acceptance rates.</div>
+    </aside>
+    <main id="app"></main>
+  </div>
 
   <dialog id="modal"><div id="modal-body"></div></dialog>
   <div id="toast" role="status"></div>
@@ -34,7 +37,9 @@
   <script src="js/profile.js"></script>
   <script src="js/companies.js"></script>
   <script src="js/internships.js"></script>
+  <script src="js/colleges.js"></script>
   <script src="js/engine.js"></script>
+  <script src="js/chances.js"></script>
   <script src="js/ai.js"></script>
   <script src="js/app.js"></script>
 </body>
