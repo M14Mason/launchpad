@@ -1,11 +1,18 @@
 // UI: Build (company -> role -> resume), Skill Bank, Master Resume, Settings.
 
-const state = { view: "build", companyId: null, roleId: null, skillFilter: "all" };
+const state = {
+  view: "build",
+  companyId: null,
+  roleId: null,
+  skillFilter: "all",
+  filters: { q: "", status: "open", where: "any", pay: "any", field: "all", kind: "all" },
+};
 const app = document.getElementById("app");
 const modal = document.getElementById("modal");
 const modalBody = document.getElementById("modal-body");
 
-const STATUS_LABEL = { eligible: "Eligible", soon: "Not yet — prep", ineligible: "Not eligible" };
+const STATUS_LABEL = { eligible: "Eligible", check: "Check requirements", soon: "Not yet — prep", ineligible: "Not eligible" };
+const STATUS_RANK = { eligible: 0, check: 1, soon: 2, ineligible: 3 };
 
 function companies() {
   return [...COMPANIES, ...Store.get("aiCompanies", [])];
@@ -72,7 +79,7 @@ function wireCrumbs() {
 }
 
 function statusCounts(roles) {
-  const n = { eligible: 0, soon: 0, ineligible: 0 };
+  const n = { eligible: 0, check: 0, soon: 0, ineligible: 0 };
   roles.forEach((r) => n[r.eligibility.status]++);
   return Object.entries(n)
     .filter(([, v]) => v)
@@ -80,27 +87,94 @@ function statusCounts(roles) {
     .join(" ");
 }
 
+const FILTERS = {
+  status: [["open", "Open to me"], ["eligible", "Can apply now"], ["all", "Everything"]],
+  where: [["any", "Anywhere"], ["remote", "Remote / online"], ["sd", "San Diego area"], ["ca", "California"]],
+  pay: [["any", "Any pay"], ["paid", "Paid only"], ["nofee", "No fees"]],
+  field: [["all", "All fields"], ["tech", "Tech / CS"], ["finance", "Finance"], ["business", "Business / marketing"], ["research", "Research / science"], ["health", "Health"], ["arts", "Arts / media"], ["gov", "Government"], ["community", "Community / volunteer"]],
+  kind: [["all", "All types"], ["internship", "Internships"], ["research", "Research"], ["program", "Programs / courses"], ["competition", "Competitions"], ["virtual", "Virtual simulations"], ["volunteer", "Volunteer"]],
+};
+
+function roleMatches(company, r) {
+  const f = state.filters;
+  const s = r.eligibility.status;
+  if (f.status === "eligible" && s !== "eligible") return false;
+  if (f.status === "open" && s === "ineligible") return false;
+  const loc = `${r.location || ""} ${r.mode || ""}`;
+  const sd = /san diego|la jolla|escondido/i.test(loc);
+  if (f.where === "remote" && !/remote|online|virtual|hybrid/i.test(loc)) return false;
+  if (f.where === "sd" && !sd) return false;
+  if (f.where === "ca" && !(sd || /, CA\b|california/i.test(loc))) return false;
+  const pay = r.pay || "";
+  if (f.pay === "paid" && (!/(^paid|stipend|\/hr|salary|scholarship|\$\d)/i.test(pay) || /^(unpaid|fee)/i.test(pay))) return false;
+  if (f.pay === "nofee" && /fee/i.test(pay)) return false;
+  if (f.field !== "all" && (r.field || r.category) !== f.field) return false;
+  if (f.kind !== "all" && r.kind !== f.kind) return false;
+  if (f.q) {
+    const hay = `${company.name} ${r.title} ${r.location || ""}`.toLowerCase();
+    if (!f.q.toLowerCase().split(/\s+/).every((w) => hay.includes(w))) return false;
+  }
+  return true;
+}
+
 function renderCompanies() {
+  const f = state.filters;
+  const all = companies();
+  const shown = all
+    .map((c) => ({ c, roles: c.roles.filter((r) => roleMatches(c, r)) }))
+    .filter((x) => x.roles.length || (x.c.ai && !f.q))
+    .sort((a, b) => {
+      const best = (x) => Math.min(...x.roles.map((r) => STATUS_RANK[r.eligibility.status]), 9);
+      return best(a) - best(b) || a.c.name.localeCompare(b.c.name);
+    });
+  const total = all.reduce((n, c) => n + c.roles.length, 0);
+  const matching = shown.reduce((n, x) => n + x.roles.length, 0);
+  const select = (key) =>
+    `<select data-filter="${key}">${FILTERS[key].map(([v, l]) => `<option value="${v}" ${f[key] === v ? "selected" : ""}>${l}</option>`).join("")}</select>`;
+
   app.innerHTML = `
     <h1 class="page">Pick a company</h1>
-    <p class="lede">Eligibility was checked against each program's public info (Sep 2026). Confirm on the source link before you apply.</p>
+    <p class="lede">${total} real programs at ${all.length} organizations, checked against their public info (Sep 2026). Always confirm on the program's page before you apply.</p>
+    <div class="card filterbar">
+      <input type="text" id="search" placeholder="Search companies, programs, cities…" value="${esc(f.q)}">
+      <div class="filter-selects">${Object.keys(FILTERS).map(select).join("")}</div>
+      <div class="small muted">Showing <strong>${matching}</strong> programs at ${shown.length} organizations${
+        matching < total ? ` · <button class="linkbtn" id="clear-filters">Clear filters</button>` : ""
+      }</div>
+    </div>
     <div class="grid">
-      ${companies()
-        .map(
-          (c) => `<button class="card clickable" data-company="${c.id}">
-            <div class="spread"><h3>${esc(c.name)}</h3>${c.ai ? '<span class="badge neutral">Added by you</span>' : ""}</div>
-            <p class="muted small" style="margin:0 0 10px">${esc(c.blurb || "")}</p>
-            <div class="row">${statusCounts(c.roles)}</div>
-          </button>`
-        )
-        .join("")}
       <button class="card clickable" id="other-company" style="border-style:dashed">
         <h3>+ Other company</h3>
         <p class="muted small" style="margin:0">Search any company's openings with AI, or paste a job posting.</p>
       </button>
+      ${shown
+        .map(
+          ({ c, roles }) => `<button class="card clickable" data-company="${c.id}">
+            <div class="spread"><h3>${esc(c.name)}</h3>${c.ai ? '<span class="badge neutral">Added by you</span>' : ""}</div>
+            <p class="muted small" style="margin:0 0 10px">${esc(roles.length === 1 ? roles[0].title : c.blurb || "")}</p>
+            <div class="row" style="margin-top:auto">${statusCounts(roles.length ? roles : c.roles)}</div>
+          </button>`
+        )
+        .join("")}
     </div>`;
   app.querySelectorAll("[data-company]").forEach((b) => b.addEventListener("click", () => go("build", { companyId: b.dataset.company, roleId: null })));
   document.getElementById("other-company").addEventListener("click", openOtherCompany);
+  app.querySelectorAll("[data-filter]").forEach((s) => s.addEventListener("change", () => ((f[s.dataset.filter] = s.value), renderCompanies())));
+  document.getElementById("clear-filters")?.addEventListener("click", () => {
+    state.filters = { q: "", status: "all", where: "any", pay: "any", field: "all", kind: "all" };
+    renderCompanies();
+  });
+  const search = document.getElementById("search");
+  search.addEventListener("input", () => {
+    f.q = search.value;
+    clearTimeout(renderCompanies._t);
+    renderCompanies._t = setTimeout(() => {
+      renderCompanies();
+      const s = document.getElementById("search");
+      s.focus();
+      s.setSelectionRange(s.value.length, s.value.length);
+    }, 200);
+  });
 }
 
 function renderRoles(company) {
@@ -116,28 +190,36 @@ function renderRoles(company) {
     <div class="stack">
       ${company.roles
         .map(
-          (r) => `<button class="card clickable" data-role="${r.id}">
+          (r) => `<div class="card clickable" role="button" tabindex="0" data-role="${r.id}">
             <div class="spread"><h3>${esc(r.title)}</h3><span class="badge ${r.eligibility.status}">${STATUS_LABEL[r.eligibility.status]}</span></div>
-            <p class="muted small" style="margin:0 0 6px">${esc(r.type || "")}</p>
+            <p class="muted small" style="margin:0 0 6px">${esc([r.kind ? r.kind[0].toUpperCase() + r.kind.slice(1) : r.type, r.location, r.pay, r.deadline && "Deadline: " + r.deadline].filter(Boolean).join(" · "))}</p>
             <p class="small" style="margin:0">${esc(r.eligibility.reason)}</p>
-            ${r.url ? `<p class="small" style="margin:6px 0 0"><span class="muted">Found at:</span> ${esc(r.url)}</p>` : ""}
-          </button>`
+            ${r.url ? `<p class="small" style="margin:8px 0 0"><a href="${esc(r.url)}" target="_blank" rel="noopener" data-stop>${r.linkIsSearch ? "Search for the official page ↗" : "Program page ↗"}</a></p>` : ""}
+          </div>`
         )
         .join("") || `<div class="card muted">No roles found.</div>`}
     </div>`;
   wireCrumbs();
-  app.querySelectorAll("[data-role]").forEach((b) => b.addEventListener("click", () => go("build", { roleId: b.dataset.role })));
+  app.querySelectorAll("[data-role]").forEach((b) => {
+    const open = (e) => !e.target.closest("[data-stop]") && go("build", { roleId: b.dataset.role });
+    b.addEventListener("click", open);
+    b.addEventListener("keydown", (e) => e.key === "Enter" && open(e));
+  });
   document.getElementById("remove-company")?.addEventListener("click", () => {
     Store.set("aiCompanies", Store.get("aiCompanies", []).filter((c) => c.id !== company.id));
     go("build", { companyId: null });
   });
 }
 
-function alternatives(exceptId) {
+// Eligible roles, same field first, then San Diego / remote ones.
+function alternatives(role) {
+  const local = (r) => /san diego|la jolla|escondido|remote|online/i.test(`${r.location || ""} ${r.mode || ""}`);
   return companies()
     .flatMap((c) => c.roles.map((r) => ({ c, r })))
-    .filter(({ r }) => r.id !== exceptId && r.eligibility.status !== "ineligible")
-    .sort((a, b) => (a.r.eligibility.status === "eligible" ? -1 : 1) - (b.r.eligibility.status === "eligible" ? -1 : 1));
+    .filter(({ r }) => r.id !== role.id && r.eligibility.status === "eligible")
+    .map((x) => ({ ...x, s: ((x.r.field || x.r.category) === (role.field || role.category) ? 2 : 0) + (local(x.r) ? 1 : 0) }))
+    .sort((a, b) => b.s - a.s)
+    .slice(0, 8);
 }
 
 function renderResult(company, role) {
@@ -162,7 +244,7 @@ function renderResult(company, role) {
           : ""
       }
       <h3>Apply to these instead</h3>
-      <div class="stack">${alternatives(role.id)
+      <div class="stack">${alternatives(role)
         .map(
           ({ c, r }) => `<button class="card clickable" data-alt="${c.id}|${r.id}">
             <div class="spread"><strong>${esc(c.name)} — ${esc(r.title)}</strong><span class="badge ${r.eligibility.status}">${STATUS_LABEL[r.eligibility.status]}</span></div>
@@ -188,10 +270,12 @@ function renderResult(company, role) {
     <div class="headline card">
       <div><div class="k">Company</div><div class="v">${esc(company.name)}</div></div>
       <div><div class="k">Role</div><div class="v">${esc(role.title)}</div></div>
-      <div><div class="k">Eligible</div><div class="v"><span class="badge ${status}">${status === "eligible" ? "Yes" : "Not yet"}</span></div><div class="small muted">${esc(role.eligibility.reason)}</div></div>
+      <div><div class="k">Eligible</div><div class="v"><span class="badge ${status}">${{ eligible: "Yes", soon: "Not yet", check: "Check first" }[status]}</span></div><div class="small muted">${esc(role.eligibility.reason)}</div></div>
       <div><div class="k">ATS Score</div><div class="bigscore">${score.total}<span class="muted" style="font-size:16px">/100</span></div><div class="small">${score.verdict}</div></div>
     </div>
     ${status === "soon" ? `<div class="notice warn">You can't apply yet — this resume is prep so you're ready the day you qualify.</div>` : ""}
+    ${status === "check" ? `<div class="notice info">Before applying, confirm you meet this requirement — your data block doesn't say either way. ${role.url ? `<a href="${esc(role.url)}" target="_blank" rel="noopener">Check the program page ↗</a>` : ""}</div>` : ""}
+    ${role.deadline ? `<p class="small muted">Typical deadline: ${esc(role.deadline)} · ${esc(role.pay || "")} · ${esc(role.location || "")}</p>` : ""}
     <div class="result">
       <div class="stack">
         ${resumeActions()}

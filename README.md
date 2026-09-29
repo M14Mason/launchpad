@@ -2,6 +2,7 @@
 
 A resume generator that uses only verified facts and never makes anything up.
 
+- **188 real programs at 174 organizations** (internships, research, paid programs, competitions). Each one is marked for you: Eligible, Check requirements, Not yet, or Not eligible. You can filter by location (remote, San Diego, California), pay, field, and type. Sources are listed at the top of `js/internships.js`.
 - **Build**: pick a company, pick a role, and get an ATS-friendly resume tailored to it, with a 0–100 rubric score, matched and missing keywords, and 3 interview practice questions.
 - **Eligibility filter**: college-only roles are refused, and the app suggests roles you can actually apply to.
 - **Skill Bank**: every skill gets a score for how much it will count on a resume. **Improve skill** asks you questions, saves your answers, and turns them into resume bullets. A bullet can't include a number that isn't already in your answers.
@@ -16,6 +17,10 @@ A resume generator that uses only verified facts and never makes anything up.
 | Phone, API key, Skill Bank answers | Your browser (localStorage) | No |
 
 Use **Settings → Export backup** to move your Skill Bank to another device.
+
+## Run it on your Windows PC
+
+Double-click `index.html`. It opens in your browser, and nothing needs to be installed.
 
 ## Put it on GitHub Pages
 

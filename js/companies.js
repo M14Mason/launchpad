@@ -24,8 +24,8 @@ window.COMPANIES = [
         type: "Paid internship · San Diego",
         category: "finance",
         eligibility: {
-          status: "soon",
-          reason: "Open to California youth ages 16–30 enrolled in school (about 20% of interns are high schoolers). You qualify once you turn 16 (Dec 2026).",
+          status: "eligible",
+          reason: "Open to California youth ages 16–30 enrolled in school (about 20% of interns are high schoolers). Apply after you turn 16 (Dec 2026).",
         },
         keywords: [
           K("Microsoft Excel", ["excel", "spreadsheet"], true),
@@ -190,8 +190,8 @@ window.COMPANIES = [
         type: "Remote program · check fees on their site",
         category: "tech",
         eligibility: {
-          status: "soon",
-          reason: "Must be at least 16 before starting the application — you qualify after you turn 16 (Dec 2026). It's a structured program, so check whether it charges a fee.",
+          status: "eligible",
+          reason: "Must be at least 16 before starting the application — apply for a 2027 cohort after you turn 16 (Dec 2026). It's a paid program (starts around $2,000; financial aid available).",
         },
         keywords: [
           K("Python", ["python"], true),
