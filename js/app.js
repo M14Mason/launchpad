@@ -11,7 +11,7 @@ const STATUS_RANK = { eligible: 0, check: 1, soon: 2, ineligible: 3 };
 const KIND_LABEL = { internship: "Internship", research: "Research", program: "Program", competition: "Competition", virtual: "Virtual", volunteer: "Volunteer" };
 
 const state = {
-  filters: { q: "", status: "open", where: "any", pay: "any", field: "all", kind: "all", sort: "chance" },
+  filters: { q: "", status: "open", where: "any", pay: "any", field: "all", kind: "all", sort: "foryou" },
   colFilter: { set: "all", sort: "chance" },
   skillFilter: "all",
 };
@@ -72,12 +72,12 @@ function empty(msg) {
 }
 
 // ---------- router ----------
-const NAV_FOR = { dashboard: "dashboard", internships: "internships", internship: "internships", generate: "internships", colleges: "colleges", college: "colleges", skills: "skills", coach: "skills", resumes: "resumes", resume: "resumes", settings: "settings" };
+const NAV_FOR = { dashboard: "dashboard", tracker: "tracker", internships: "internships", internship: "internships", generate: "internships", colleges: "colleges", college: "colleges", skills: "skills", coach: "skills", resumes: "resumes", resume: "resumes", settings: "settings" };
 function route() {
   const [view = "dashboard", ...rest] = location.hash.slice(1).split("/");
   const id = decodeURIComponent(rest.join("/"));
   document.querySelectorAll("#nav a").forEach((a) => a.classList.toggle("active", a.dataset.nav === (NAV_FOR[view] || "dashboard")));
-  const views = { dashboard: renderDashboard, internships: renderInternships, internship: renderInternship, generate: renderGenerate, colleges: renderColleges, college: renderCollege, skills: renderSkills, coach: renderCoach, resumes: renderResumes, resume: renderResumeView, settings: renderSettings, pair: renderPair };
+  const views = { dashboard: renderDashboard, internships: renderInternships, internship: renderInternship, generate: renderGenerate, colleges: renderColleges, college: renderCollege, skills: renderSkills, coach: renderCoach, resumes: renderResumes, resume: renderResumeView, settings: renderSettings, pair: renderPair, tracker: renderTracker };
   (views[view] || renderDashboard)(id);
   if (!route.keepScroll) window.scrollTo(0, 0);
   route.keepScroll = false;
@@ -106,7 +106,12 @@ function nextMoves() {
   const urgent = open
     .map((x) => ({ ...x, away: monthsAway(x.r.deadline), ch: cachedChance(x.r) }))
     .filter((x) => x.away !== null && x.away <= 2)
-    .sort((a, b) => a.away - b.away || b.ch.chance - a.ch.chance);
+    .sort((a, b) => goalFit(b.r) - goalFit(a.r) || a.away - b.away || b.ch.chance - a.ch.chance);
+  const t = tracker();
+  const dueTracked = Object.entries(t)
+    .filter(([, v]) => v.date && !["applied", "interview", "accepted", "rejected"].includes(v.status) && daysUntil(v.date) >= 0 && daysUntil(v.date) <= 21)
+    .sort((a, b) => daysUntil(a[1].date) - daysUntil(b[1].date))[0];
+  if (dueTracked) moves.push({ tag: "Due", text: `${dueTracked[1].org}: ${dueLabel(daysUntil(dueTracked[1].date))}. Finish and submit your application.`, href: `#internship/${dueTracked[0]}` });
   if (urgent[0]) moves.push({ tag: "Apply", text: `Apply to ${urgent[0].r.org} — ${urgent[0].r.title}. Deadline: ${urgent[0].r.deadline}. Your chance ≈ ${urgent[0].ch.chance}%.`, href: `#internship/${urgent[0].r.id}` });
   const weakDemand = allSkills(bank)
     .map((s) => ({ s, sc: cachedSkillScore(s, bank) }))
@@ -115,7 +120,10 @@ function nextMoves() {
   if (weakDemand) moves.push({ tag: "Skill", text: `Prove ${weakDemand.s.name} (${weakDemand.sc.total}/100) — roles you're targeting screen for it.`, href: `#coach/${weakDemand.s.id}` });
   const flag = thinFlags(bank)[0];
   if (flag) moves.push({ tag: "Resume", text: flag, href: "#skills" });
-  const top = open.map((x) => ({ ...x, ch: cachedChance(x.r) })).sort((a, b) => b.ch.chance - a.ch.chance).find((x) => x.r.kind === "internship" || x.r.kind === "research");
+  const top = open
+    .map((x) => ({ ...x, ch: cachedChance(x.r) }))
+    .filter((x) => x.r.kind === "internship" || x.r.kind === "research")
+    .sort((a, b) => forYouScore(b.r, b.ch) - forYouScore(a.r, a.ch))[0];
   if (top) moves.push({ tag: "Resume", text: `Generate a tailored resume for your top match: ${top.r.org} (${top.ch.chance}%).`, href: `#generate/${top.r.id}` });
   if (!AI.enabled()) moves.push({ tag: "Setup", text: "Add a Claude API key to unlock live role research, keyword rewording and the smart coach.", href: "#settings" });
   const reps = Object.values(Store.get("practice", {})).filter((t) => t && t.trim().length > 40).length;
@@ -126,8 +134,20 @@ function nextMoves() {
 function renderDashboard() {
   const r = readiness();
   const open = allRoles().filter(({ r }) => r.eligibility.status === "eligible").map((x) => ({ ...x, ch: cachedChance(x.r) }));
-  const top = open.filter((x) => x.r.kind === "internship" || x.r.kind === "research").sort((a, b) => b.ch.chance - a.ch.chance).slice(0, 6);
-  const soon = open.map((x) => ({ ...x, away: monthsAway(x.r.deadline) })).filter((x) => x.away !== null && x.away <= 3).sort((a, b) => a.away - b.away).slice(0, 5);
+  const top = open.filter((x) => x.r.kind !== "virtual" && x.r.kind !== "volunteer").sort((a, b) => forYouScore(b.r, b.ch) - forYouScore(a.r, a.ch)).slice(0, 6);
+  // Tracked programs with exact dates come first, then typical deadlines for your goal.
+  const tracked = Object.entries(tracker())
+    .filter(([, v]) => v.date && daysUntil(v.date) >= 0 && !["accepted", "rejected"].includes(v.status))
+    .map(([id, v]) => ({ found: findRole(id), v }))
+    .filter((x) => x.found)
+    .map(({ found, v }) => ({ r: { ...found.r, org: found.r.org || found.c.name }, ch: cachedChance(found.r), label: dueLabel(daysUntil(v.date)), days: daysUntil(v.date) }))
+    .sort((a, b) => a.days - b.days);
+  const trackedIds = new Set(tracked.map((x) => x.r.id));
+  const typical = open
+    .map((x) => ({ ...x, away: monthsAway(x.r.deadline), label: x.r.deadline }))
+    .filter((x) => x.away !== null && x.away <= 3 && !trackedIds.has(x.r.id))
+    .sort((a, b) => goalFit(b.r) - goalFit(a.r) || a.away - b.away);
+  const soon = [...tracked, ...typical].slice(0, 5);
   const cols = ["col-uc-san-diego", "col-ucla", "col-usc"].map((id) => COLLEGES.find((c) => c.id === id)).filter(Boolean);
 
   app.innerHTML = `
@@ -168,7 +188,7 @@ function renderDashboard() {
         ${
           soon.length
             ? `<div class="list compact">${soon
-                .map(({ r, ch }) => `<a class="list-row" href="#internship/${r.id}">${ring(ch.chance, { size: 40 })}<div class="grow"><div class="row-title">${esc(r.org)}</div><div class="small muted">${esc(r.title)}</div></div><span class="pill">${esc(r.deadline)}</span></a>`)
+                .map(({ r, ch, label, days }) => `<a class="list-row" href="#internship/${r.id}">${ring(ch.chance, { size: 40 })}<div class="grow"><div class="row-title">${esc(r.org)}</div><div class="small muted">${esc(r.title)}</div></div><span class="pill ${days !== undefined && days <= 7 ? "pill-urgent" : ""}">${esc(label)}</span></a>`)
                 .join("")}</div>`
             : `<p class="muted small">No eligible deadlines in the next 3 months.</p>`
         }
@@ -176,7 +196,7 @@ function renderDashboard() {
     </div>
 
     <section>
-      <div class="section-head"><h2>Your best internship &amp; research matches</h2><a class="small" href="#internships">Browse all ${open.length}</a></div>
+      <div class="section-head"><h2>Best matches for ${esc(GOALS[goal()].label.toLowerCase())}</h2><a class="small" href="#settings">Change goal</a></div>
       <div class="grid cards3">${top
         .map(
           ({ r, ch }) => `<a class="card match" href="#internship/${r.id}">
@@ -205,7 +225,7 @@ const FILTERS = {
   pay: [["any", "Any pay"], ["paid", "Paid only"], ["nofee", "No fees"]],
   field: [["all", "All fields"], ["tech", "Tech / CS"], ["finance", "Finance"], ["business", "Business"], ["research", "Research"], ["health", "Health"], ["arts", "Arts / media"], ["gov", "Government"], ["community", "Community"]],
   kind: [["all", "All types"], ["internship", "Internships"], ["research", "Research"], ["program", "Programs"], ["competition", "Competitions"], ["virtual", "Virtual"], ["volunteer", "Volunteer"]],
-  sort: [["chance", "Best chance"], ["deadline", "Deadline soonest"], ["name", "A–Z"]],
+  sort: [["foryou", "For you"], ["chance", "Best chance"], ["deadline", "Deadline soonest"], ["name", "A–Z"]],
 };
 
 function roleMatches(r) {
@@ -235,6 +255,7 @@ function renderInternships() {
   const all = allRoles().map(({ c, r }) => ({ c, r: { ...r, org: r.org || c.name } }));
   let shown = all.filter(({ r }) => roleMatches(r)).map((x) => ({ ...x, ch: cachedChance(x.r) }));
   const sorters = {
+    foryou: (a, b) => STATUS_RANK[a.r.eligibility.status] - STATUS_RANK[b.r.eligibility.status] || forYouScore(b.r, b.ch) - forYouScore(a.r, a.ch),
     chance: (a, b) => STATUS_RANK[a.r.eligibility.status] - STATUS_RANK[b.r.eligibility.status] || b.ch.chance - a.ch.chance,
     deadline: (a, b) => (monthsAway(a.r.deadline) ?? 99) - (monthsAway(b.r.deadline) ?? 99),
     name: (a, b) => a.r.org.localeCompare(b.r.org),
@@ -315,6 +336,8 @@ function renderInternship(id) {
       <div class="stack">
         <section class="card"><h2>What it is</h2><p>${esc(about)}</p><p class="small muted">${esc(r.eligibility.reason)}</p></section>
 
+        ${s !== "ineligible" ? trackerPanelHTML(r) : ""}
+
         <section class="card"><h2>Key dates</h2>
           <div class="kv"><span>Applications open</span><strong>${esc(research?.opens || r.opens || "Not published — check the official page")}</strong></div>
           <div class="kv"><span>Deadline</span><strong>${esc(research?.closes || r.deadline || "Varies")}</strong></div>
@@ -335,6 +358,8 @@ function renderInternship(id) {
           ${AI.enabled() ? `<button class="btn small" id="do-research">${research ? "Refresh" : "Research this program"}</button>` : `<a class="small" href="#settings">Add an API key to enable</a>`}</div>
           <div id="research-out">${research ? researchHTML(research) : `<p class="muted small">Claude searches the official page and the web for what this program actually looks for, dates, and any published acceptance numbers.</p>`}</div>
         </section>
+
+        ${s !== "ineligible" ? writingPanelHTML(r) : ""}
       </div>
 
       <aside class="chance-card card">
@@ -363,6 +388,14 @@ function renderInternship(id) {
       toast("Research updated.");
     })
   );
+  const rerender = () => {
+    route.keepScroll = true;
+    const y = window.scrollY;
+    renderInternship(id);
+    window.scrollTo(0, y);
+  };
+  wireTrackerPanel(r, rerender);
+  wireWritingPanel(r, rerender);
 }
 
 function researchHTML(x) {
@@ -1072,6 +1105,9 @@ function renderSettings() {
     <div class="grid cards2">
       <div class="card"><h3>Contact</h3>
         <label class="field"><span>Phone (printed on resumes)</span><input type="tel" id="phone" value="${esc(s.phone)}" placeholder="(415) 000-0000"></label>
+        <label class="field"><span>Your goal (ranks matches and next moves)</span><select id="goal">${Object.entries(GOALS)
+          .map(([k, g]) => `<option value="${k}" ${goal() === k ? "selected" : ""}>${g.label}</option>`)
+          .join("")}</select></label>
         <button class="btn primary" id="save-contact">Save</button></div>
       <div class="card"><h3>AI features</h3>
         <p class="small muted">Unlocks live role research, keyword rewording, the adaptive coach, "Find roles" and answer feedback. Get a key at console.anthropic.com — each use costs a little on your Anthropic account.</p>
@@ -1089,8 +1125,8 @@ function renderSettings() {
     </div>`;
   const $ = (id) => document.getElementById(id);
   const save = (patch) => Store.set("settings", { ...getSettings(), ...patch });
-  const KEYS = ["bank", "aiCompanies", "practice", "coach", "resumes", "research"];
-  $("save-contact").onclick = () => (save({ phone: $("phone").value.trim() }), toast("Saved."));
+  const KEYS = ["bank", "aiCompanies", "practice", "coach", "resumes", "research", "tracker", "essays"];
+  $("save-contact").onclick = () => (save({ phone: $("phone").value.trim(), goal: $("goal").value }), toast("Saved."));
   $("save-ai").onclick = () => (save({ apiKey: $("apikey").value.trim(), model: $("model").value }), toast("Saved."));
   $("test-ai").onclick = (e) =>
     busy(e.currentTarget, async () => {
@@ -1132,9 +1168,14 @@ function syncCardHTML() {
     return `<div class="card" id="sync-card"><h3>Sync between devices</h3>
       <p class="small"><span class="badge eligible">Connected</span> ${last ? "Last synced " + new Date(last).toLocaleString() : "Not synced yet"}.</p>
       <p class="small muted">Changes upload automatically (encrypted). Your other devices pick them up whenever you open the app.</p>
-      <div class="row"><button class="btn primary" id="sync-now">Sync now</button><button class="btn" id="show-qr">Connect my phone</button><button class="btn ghost" id="sync-off">Disconnect this device</button></div>
+      <div class="row"><button class="btn primary" id="sync-now">Sync now</button><button class="btn" id="show-qr">Connect my phone</button><button class="btn" id="copy-code">Copy pairing code</button><button class="btn ghost" id="sync-off">Disconnect this device</button></div>
       <div id="qr-box"></div></div>`;
   }
+  const pairBox = `<details class="pair-code" ${isStandalone() ? "open" : ""}><summary>Already synced on another device? Connect with a pairing code</summary>
+      <p class="small muted">On the connected device: Settings → <strong>Copy pairing code</strong>, send it to yourself (Notes, Messages, AirDrop), then paste it here.</p>
+      <label class="field"><span>Pairing code</span><input type="text" id="pair-code" placeholder="Paste the code" autocomplete="off" autocapitalize="off" spellcheck="false"></label>
+      <label class="field"><span>Sync passphrase</span><input type="password" id="pair-code-pass" autocomplete="current-password"></label>
+      <button class="btn primary" id="pair-code-go">Connect with code</button></details>`;
   return `<div class="card" id="sync-card"><h3>Sync between devices</h3>
     <p class="small muted">Keeps your Skill Bank, resumes, coach chats, phone number and API key the same on your PC and phone. Everything is encrypted with your passphrase before it's saved to a secret gist on your GitHub account.</p>
     <ol class="small steps-list">
@@ -1144,7 +1185,12 @@ function syncCardHTML() {
     </ol>
     <label class="field"><span>GitHub token</span><input type="password" id="sync-token" placeholder="ghp_…" autocomplete="off"></label>
     <label class="field"><span>Sync passphrase</span><input type="password" id="sync-pass" placeholder="Same on every device" autocomplete="new-password"></label>
-    <button class="btn primary" id="sync-connect">Connect</button></div>`;
+    <button class="btn primary" id="sync-connect">Connect</button>
+    ${pairBox}</div>`;
+}
+
+function isStandalone() {
+  return window.matchMedia?.("(display-mode: standalone)").matches || navigator.standalone === true;
 }
 
 function chooseSide() {
@@ -1178,6 +1224,25 @@ function wireSyncCard() {
       renderSettings();
     })
   );
+  $("pair-code-go")?.addEventListener("click", (e) =>
+    busy(e.currentTarget, async () => {
+      const raw = $("pair-code").value.trim();
+      const pair = Sync.readPairCode(raw.includes("#pair/") ? raw.split("#pair/")[1] : raw);
+      if (!pair) return toast("That pairing code isn't valid — copy it again from your other device.");
+      Sync.setCfg({ gistId: pair.g });
+      await doConnect(pair.t, $("pair-code-pass").value);
+      renderSettings();
+    })
+  );
+  $("copy-code")?.addEventListener("click", async () => {
+    const code = Sync.pairLink().split("#pair/")[1];
+    try {
+      await navigator.clipboard.writeText(code);
+      toast("Pairing code copied — paste it on your other device. Don't share it with anyone.");
+    } catch {
+      $("qr-box").innerHTML = `<p class="small">Copy this code (don't share it):</p><textarea readonly class="code-box">${esc(code)}</textarea>`;
+    }
+  });
   $("sync-now")?.addEventListener("click", (e) =>
     busy(e.currentTarget, async () => {
       const changed = await Sync.syncNow();
@@ -1252,4 +1317,5 @@ async function syncOnOpen() {
 }
 route();
 syncOnOpen();
+if ("serviceWorker" in navigator && location.protocol === "https:") navigator.serviceWorker.register("sw.js").catch(() => {});
 document.addEventListener("visibilitychange", () => document.visibilityState === "visible" && syncOnOpen());

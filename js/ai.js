@@ -230,3 +230,26 @@ Return ONLY JSON: {"reply": "your next message (a follow-up question, or a short
     return { reply: r.reply, done: !!r.done, bullet: typeof r.bullet === "string" ? r.bullet.trim().replace(/\.$/, "") : "" };
   },
 });
+
+Object.assign(AI, {
+  // Essays and cover letters written only from Mason's verified data + Skill Bank answers.
+  async draftWriting(role, kind, prompt, limit, research) {
+    const task =
+      kind === "cover"
+        ? `Write a cover letter (max ${limit} words) from Mason to ${role.org} for "${role.title}".`
+        : `Answer this application question in Mason's voice (max ${limit} words): """${prompt}"""`;
+    const text = await this.ask(
+      `${task}
+Program: ${role.org} — ${role.title}. ${role.about || ""}
+${research?.lookFor?.length ? `What they look for: ${research.lookFor.join("; ")}` : ""}
+
+Rules:
+- Use ONLY facts from MASON'S VERIFIED DATA and his Skill Bank answers. Pick the 1–2 most relevant true stories rather than listing everything.
+- Never invent numbers, results, feelings he didn't state, people, or events. If the question needs a detail he hasn't given, write a short [bracketed note] describing what he should add, e.g. [add a real moment when…].
+- Sound like a thoughtful 15-year-old, not a corporate brochure: specific, plain words, no clichés ("passionate", "ever since I was young"), no exaggeration.
+- Stay under the word limit. Return only the text — no title, no commentary.`,
+      { effort: "medium", maxTokens: 4000 }
+    );
+    return text.trim();
+  },
+});
