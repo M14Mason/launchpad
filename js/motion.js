@@ -46,6 +46,28 @@ const Motion = {
     g.fromTo(els, { y: 16, autoAlpha: 0 }, { y: 0, autoAlpha: 1, duration: 0.55, stagger: 0.05, ease: "power3.out", clearProps: "transform,opacity,visibility" });
     this.ensureVisible(els);
     this.numbers(root);
+    this.scrollReveal(root);
+  },
+  // Below-the-fold cards glide in when they scroll into view (IntersectionObserver + GSAP).
+  scrollReveal(root) {
+    const g = window.gsap;
+    if (this.reduced || !g || !("IntersectionObserver" in window)) return;
+    this._io?.disconnect();
+    const fold = window.innerHeight;
+    const targets = [...root.querySelectorAll(".card, .list > .list-row, .stat, .move, .board-col")].filter((el) => el.getBoundingClientRect().top > fold).slice(0, 80);
+    if (!targets.length) return;
+    g.set(targets, { autoAlpha: 0, y: 22 });
+    const io = (this._io = new IntersectionObserver(
+      (entries) => {
+        const shown = entries.filter((e) => e.isIntersecting).map((e) => e.target);
+        if (!shown.length) return;
+        shown.forEach((el) => io.unobserve(el));
+        g.to(shown, { autoAlpha: 1, y: 0, duration: 0.6, stagger: 0.06, ease: "power3.out", clearProps: "transform,opacity,visibility" });
+        this.ensureVisible(shown, 1400);
+      },
+      { rootMargin: "0px 0px -8% 0px" }
+    ));
+    targets.forEach((el) => io.observe(el));
   },
   reveal(el) {
     const g = window.gsap;
@@ -87,7 +109,13 @@ const Motion = {
     if (!el) return;
     const g = window.gsap;
     if (g && !this.reduced) {
-      const parts = [...el.querySelectorAll(".eyebrow, h1, p, .row, .hero-score")];
+      // Headline reveals word by word.
+      const h1 = el.querySelector("h1");
+      if (h1 && !h1.querySelector(".w")) h1.innerHTML = h1.textContent.split(" ").map((w) => `<span class="w"><span>${esc(w)}</span></span>`).join(" ");
+      const words = [...el.querySelectorAll("h1 .w > span")];
+      g.from(words, { yPercent: 110, duration: 0.9, stagger: 0.05, ease: "power4.out", clearProps: "transform" });
+      this.ensureVisible(words, 1800);
+      const parts = [...el.querySelectorAll(".eyebrow, p, .row, .hero-score")];
       g.from(parts, { y: 22, autoAlpha: 0, duration: 0.8, stagger: 0.08, ease: "power3.out", clearProps: "transform,opacity,visibility" });
       this.ensureVisible(parts, 1800);
     }
@@ -129,8 +157,8 @@ const Motion = {
     const pos = new Float32Array(count * 3);
     const base = new Float32Array(count * 2);
     const col = new Float32Array(count * 3);
-    const c1 = new THREE.Color("#93c5fd");
-    const c2 = new THREE.Color("#e9d5ff");
+    const c1 = new THREE.Color("#52525b");
+    const c2 = new THREE.Color("#8fb4ff");
     const tmp = new THREE.Color();
     for (let i = 0, k = 0; i < cols; i++)
       for (let j = 0; j < rows; j++, k++) {
@@ -208,5 +236,73 @@ const Motion = {
     };
     requestAnimationFrame(tick);
   },
+};
+// Resume Studio score orb: a slowly turning 3D wireframe whose color tracks the ATS score
+// (red → amber → green) and pulses whenever the score changes.
+Motion.orb = async function (el, getScore) {
+  if (!el || this.reduced) return;
+  try {
+    if (!window.THREE) await this.load(THREE_URL);
+  } catch {
+    return;
+  }
+  if (!el.isConnected || el.querySelector("canvas")) return;
+  const THREE = window.THREE;
+  let renderer;
+  try {
+    renderer = new THREE.WebGLRenderer({ alpha: true, antialias: true, powerPreference: "low-power" });
+  } catch {
+    return;
+  }
+  renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
+  el.appendChild(renderer.domElement);
+  const scene = new THREE.Scene();
+  const camera = new THREE.PerspectiveCamera(40, 1, 0.1, 50);
+  camera.position.z = 5.2;
+  const geo = new THREE.IcosahedronGeometry(1.25, 2);
+  const wire = new THREE.LineSegments(new THREE.WireframeGeometry(geo), new THREE.LineBasicMaterial({ transparent: true, opacity: 0.35 }));
+  const dots = new THREE.Points(geo, new THREE.PointsMaterial({ size: 0.05, transparent: true, opacity: 0.9 }));
+  const group = new THREE.Group();
+  group.add(wire, dots);
+  scene.add(group);
+  const size = () => {
+    const s = el.clientWidth || 160;
+    renderer.setSize(s, s, false);
+  };
+  size();
+  const color = new THREE.Color();
+  const target = new THREE.Color();
+  const tone = (v) => (v >= 80 ? "#22c55e" : v >= 60 ? "#3b82f6" : v >= 40 ? "#f59e0b" : "#ef4444");
+  let last = getScore();
+  color.set(tone(last));
+  let pulse = 0;
+  const t0 = performance.now();
+  const tick = (now) => {
+    if (!el.isConnected) {
+      geo.dispose();
+      wire.geometry.dispose();
+      renderer.dispose();
+      return;
+    }
+    requestAnimationFrame(tick);
+    if (document.hidden) return;
+    const v = getScore();
+    if (v !== last) {
+      pulse = 1;
+      last = v;
+    }
+    target.set(tone(v));
+    color.lerp(target, 0.06);
+    wire.material.color.copy(color);
+    dots.material.color.copy(color);
+    const t = (now - t0) / 1000;
+    pulse *= 0.93;
+    const s = 1 + pulse * 0.18 + Math.sin(t * 1.4) * 0.02;
+    group.scale.set(s, s, s);
+    group.rotation.y = t * 0.25;
+    group.rotation.x = Math.sin(t * 0.3) * 0.3;
+    renderer.render(scene, camera);
+  };
+  requestAnimationFrame(tick);
 };
 Motion.preload();

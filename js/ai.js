@@ -326,3 +326,38 @@ Only include programs you found with an official page. Return ONLY a JSON array 
     return Array.isArray(arr) ? arr.filter((x) => x && x.org && x.title && /^https?:\/\//.test(x.url || "")) : [];
   },
 });
+
+Object.assign(AI, {
+  // Per-bullet rewrites aimed at the ATS/recruiter issues found. Same facts, same numbers — verified after.
+  async improveBullets(target, items, allowed) {
+    const text = await this.ask(
+      `Improve these resume bullets for: ${target.org ? target.org + " — " : ""}${target.title}.
+Keywords this role screens for: ${target.keywords.map((k) => k.term).join(", ")}.
+Each line lists the issues an ATS/recruiter check found. Fix what you honestly can:
+- Start with a strong, specific action verb; cut filler; keep under ~25 words.
+- Keep EVERY fact and EVERY number exactly. Never add numbers, results, tools, scope or claims that aren't in the line.
+- You may use these descriptive terms only where the line clearly describes that activity: ${allowed.join(", ") || "(none)"}.
+- If a line needs a number it doesn't have, don't invent one — leave the number out.
+- Skip lines that are already strong.
+Return ONLY a JSON array of {"id": "the id", "text": "improved line (no period)", "why": "max 12 words"}.
+
+${items.map((b) => `${b.id} | ${b.text} | issues: ${b.issues.join("; ") || "none"}`).join("\n")}`,
+      { effort: "medium" }
+    );
+    const out = this.parseJSON(text, []);
+    return Array.isArray(out) ? out.filter((x) => x && typeof x.id === "string" && typeof x.text === "string") : [];
+  },
+
+  async writeSummary(target, resume) {
+    const text = await this.ask(
+      `Write a resume summary for Mason targeting: ${target.org ? target.org + " — " : ""}${target.title}.
+2 sentences, 35-55 words. Open with who he is (high school sophomore, Business Finance focus), name the target role, then his 1-2 most relevant TRUE accomplishments from his data. Use these keywords only where true: ${target.keywords.map((k) => k.term).join(", ")}.
+Never invent numbers or claims. No first person ("I"). Return only the summary text.
+
+Current resume:
+${resumeToText(resume)}`,
+      { effort: "medium" }
+    );
+    return text.trim().replace(/^["']|["']$/g, "");
+  },
+});

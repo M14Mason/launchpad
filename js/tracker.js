@@ -78,7 +78,7 @@ function trackerPanelHTML(r) {
       t
         ? `<div class="grid cards2 mt-s">
             <label class="field"><span>Exact deadline (from the official page)</span><input type="date" id="track-date" value="${esc(t.date || "")}"></label>
-            <div class="field"><span class="lbl">Reminder</span><button class="btn block" id="track-ics" ${t.date ? "" : "disabled"}>📅 Add to my calendar</button><div class="small muted">${t.date ? dueLabel(daysUntil(t.date)) + " · reminds you 7 days and 1 day before" : "Set the date first"}</div></div>
+            <div class="field"><span class="lbl">Reminder</span><button class="btn block" id="track-ics" ${t.date ? "" : "disabled"}>${icon("calendar")} Add to my calendar</button><div class="small muted">${t.date ? dueLabel(daysUntil(t.date)) + " · reminds you 7 days and 1 day before" : "Set the date first"}</div></div>
           </div>
           <label class="field"><span>Notes</span><textarea id="track-notes" placeholder="Who to ask for a recommendation, essay ideas, login info for the portal…">${esc(t.notes || "")}</textarea></label>`
         : `<p class="small muted">Tap a status to start tracking. Typical deadline: ${esc(r.deadline || "varies")}.</p>`
@@ -222,7 +222,7 @@ function writingPanelHTML(r) {
     <div class="row"><select id="w-kind"><option value="essay">Short-answer essay</option><option value="cover">Cover letter</option></select>
       <input type="text" id="w-limit" placeholder="Word limit (e.g. 250)" inputmode="numeric" style="max-width:190px"></div>
     <label class="field mt-s"><span>Essay question (paste it from the application)</span><textarea id="w-prompt" placeholder="e.g. Describe a problem you solved and what you learned."></textarea></label>
-    ${AI.enabled() ? `<button class="btn primary" id="w-go">✨ Draft it</button>` : `<p class="small muted">Add a Claude API key in <a href="#settings">Settings</a> to draft essays.</p>`}
+    ${AI.enabled() ? `<button class="btn primary" id="w-go">${icon("sparkles")} Draft it</button>` : `<p class="small muted">Add a Claude API key in <a href="#settings">Settings</a> to draft essays.</p>`}
     <div id="w-out"></div>
     ${saved.length ? `<h4>Saved drafts</h4>${saved.map((e) => `<details class="draft"><summary>${{ cover: "Cover letter", outreach: "Outreach email" }[e.kind] || "Essay"} · ${esc(new Date(e.ts).toLocaleDateString())}${e.prompt ? " — " + esc(e.prompt.slice(0, 60)) : ""}</summary><div class="draft-text">${esc(e.text)}</div><div class="row"><button class="btn small" data-copy-essay="${e.id}">Copy</button><button class="btn ghost small" data-del-essay="${e.id}">Delete</button></div></details>`).join("")}` : ""}
   </section>`;
@@ -245,8 +245,8 @@ function wireWritingPanel(r, rerender) {
       $("w-out").innerHTML = `
         <label class="field mt-s"><span>Draft — edit it until every word sounds like you and is true</span><textarea id="w-text" class="essay-box">${esc(text)}</textarea></label>
         <div class="small ${chk.words > limit ? "bad-text" : "muted"}">${chk.words} / ${limit} words</div>
-        ${chk.bad.length ? `<p class="small bad-text">⚠ Fact-check: ${chk.bad.map((n) => `“${esc(n)}”`).join(", ")} isn't in your data — fix or remove before submitting.</p>` : `<p class="small good-text">✓ Fact-check: every number matches your data.</p>`}
-        ${chk.placeholders ? `<p class="small">✎ ${chk.placeholders} [bracketed] spot${chk.placeholders === 1 ? " needs" : "s need"} your real details — the AI won't invent them.</p>` : ""}
+        ${chk.bad.length ? `<p class="small bad-text">${icon("alert")} Fact-check: ${chk.bad.map((n) => `“${esc(n)}”`).join(", ")} isn't in your data — fix or remove before submitting.</p>` : `<p class="small good-text">${icon("check")} Fact-check: every number matches your data.</p>`}
+        ${chk.placeholders ? `<p class="small">${icon("pen")} ${chk.placeholders} [bracketed] spot${chk.placeholders === 1 ? " needs" : "s need"} your real details — the AI won't invent them.</p>` : ""}
         <div class="row"><button class="btn primary" id="w-save">Save draft</button><button class="btn" id="w-copy">Copy</button></div>`;
       $("w-save").onclick = () => {
         saveEssay(r.id, { id: uid(), kind, prompt, text: $("w-text").value, ts: Date.now() });

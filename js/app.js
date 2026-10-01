@@ -6,7 +6,46 @@ const app = document.getElementById("app");
 const modal = document.getElementById("modal");
 const modalBody = document.getElementById("modal-body");
 
-const STATUS_LABEL = { eligible: "Eligible", check: "Check requirements", soon: "Not yet", ineligible: "Not eligible" };
+// ---------- navigation (built from the icon set) ----------
+const NAV = [
+  { group: "Overview" },
+  { id: "dashboard", icon: "home", label: "Dashboard", short: "Home" },
+  { group: "Opportunities" },
+  { id: "internships", icon: "briefcase", label: "Programs", short: "Programs" },
+  { id: "tracker", icon: "clipboard", label: "Tracker", short: "Tracker", more: true },
+  { id: "colleges", icon: "cap", label: "Colleges", short: "Colleges", more: true },
+  { group: "Prepare" },
+  { id: "studio", icon: "file", label: "Resume Studio", short: "Studio" },
+  { id: "skills", icon: "award", label: "Skill Bank", short: "Skills", more: true },
+  { id: "study", icon: "book", label: "Study", short: "Study" },
+  { id: "settings", icon: "settings", label: "Settings", short: "Settings", more: true, bottom: true },
+];
+(function buildNav() {
+  document.querySelector(".logo").innerHTML = icon("trend");
+  const isMac = /Mac|iPhone|iPad/.test(navigator.platform || navigator.userAgent);
+  document.getElementById("open-palette").innerHTML = `${icon("search")}<span>Search</span><kbd>${isMac ? "⌘" : "Ctrl"} K</kbd>`;
+  document.getElementById("nav").innerHTML =
+    `<span class="nav-indicator"></span>` +
+    NAV.map((n) =>
+      n.group
+        ? `<div class="nav-group">${n.group}</div>`
+        : `<a href="#${n.id}" data-nav="${n.id}" class="${n.more ? "more-item" : ""} ${n.bottom ? "nav-bottom" : ""}">${icon(n.icon)}<span class="lbl">${n.label}</span><span class="lbl-s">${n.short}</span></a>`
+    ).join("") +
+    `<button type="button" id="nav-more" class="nav-more" aria-haspopup="true" aria-expanded="false">${icon("more")}<span class="lbl-s">More</span></button>`;
+})();
+function moveNavIndicator() {
+  const a = document.querySelector("#nav a.active");
+  const ind = document.querySelector(".nav-indicator");
+  if (!ind || window.innerWidth <= 860) return;
+  if (!a) return (ind.style.opacity = 0);
+  const props = { y: a.offsetTop, height: a.offsetHeight, opacity: 1 };
+  if (window.gsap && !Motion.reduced) gsap.to(ind, { ...props, duration: ind.style.opacity === "1" ? 0.35 : 0, ease: "power3.out" });
+  else Object.assign(ind.style, { transform: `translateY(${props.y}px)`, height: props.height + "px", opacity: 1 });
+  ind.style.opacity = "1";
+}
+window.addEventListener("resize", () => moveNavIndicator());
+
+const STATUS_LABEL ={ eligible: "Eligible", check: "Check requirements", soon: "Not yet", ineligible: "Not eligible" };
 const STATUS_RANK = { eligible: 0, check: 1, soon: 2, ineligible: 3 };
 const KIND_LABEL = { internship: "Internship", research: "Research", program: "Program", competition: "Competition", virtual: "Virtual", volunteer: "Volunteer" };
 
@@ -72,13 +111,14 @@ function empty(msg) {
 }
 
 // ---------- router ----------
-const NAV_FOR = { dashboard: "dashboard", tracker: "tracker", internships: "internships", internship: "internships", generate: "internships", colleges: "colleges", college: "colleges", skills: "skills", coach: "skills", resumes: "resumes", resume: "resumes", settings: "settings", study: "study", lesson: "study", roleplay: "study", mock: "study", profile: "colleges" };
+const NAV_FOR = { dashboard: "dashboard", tracker: "tracker", internships: "internships", internship: "internships", generate: "internships", colleges: "colleges", college: "colleges", skills: "skills", coach: "skills", resumes: "studio", resume: "studio", studio: "studio", settings: "settings", study: "study", lesson: "study", roleplay: "study", mock: "study", profile: "colleges" };
 function route() {
   const [view = "dashboard", ...rest] = location.hash.slice(1).split("/");
   const id = decodeURIComponent(rest.join("/"));
   document.querySelectorAll("#nav a").forEach((a) => a.classList.toggle("active", a.dataset.nav === (NAV_FOR[view] || "dashboard")));
   document.getElementById("nav-more")?.classList.toggle("active", !!document.querySelector("#nav a.more-item.active"));
-  const views = { dashboard: renderDashboard, internships: renderInternships, internship: renderInternship, generate: renderGenerate, colleges: renderColleges, college: renderCollege, skills: renderSkills, coach: renderCoach, resumes: renderResumes, resume: renderResumeView, settings: renderSettings, pair: renderPair, tracker: renderTracker, study: (id) => (id ? renderTrack(id) : renderStudy()), lesson: renderLesson, roleplay: renderRoleplay, mock: renderMock, profile: renderCollegeProfile };
+  moveNavIndicator();
+  const views = { dashboard: renderDashboard, internships: renderInternships, internship: renderInternship, generate: renderGenerate, colleges: renderColleges, college: renderCollege, skills: renderSkills, coach: renderCoach, resumes: renderResumes, resume: renderResumeView, settings: renderSettings, pair: renderPair, tracker: renderTracker, study: (id) => (id ? renderTrack(id) : renderStudy()), lesson: renderLesson, roleplay: renderRoleplay, mock: renderMock, profile: renderCollegeProfile, studio: renderStudio };
   // Leaving a page stops any live mic or spoken question.
   if (dictate.rec) dictate.rec.stop();
   try {
@@ -113,7 +153,11 @@ document.getElementById("nav-more")?.addEventListener("click", (e) => {
   if (!m.hidden) return closeMoreMenu();
   m.innerHTML = [...document.querySelectorAll("#nav a.more-item")]
     .map((a) => `<a href="${a.getAttribute("href")}" class="${a.classList.contains("active") ? "active" : ""}">${a.querySelector("svg").outerHTML}<span>${a.querySelector(".lbl").textContent}</span></a>`)
-    .join("");
+    .join("") + `<button type="button" id="more-search">${icon("search")}<span>Search</span></button>`;
+  document.getElementById("more-search").onclick = () => {
+    closeMoreMenu();
+    openPalette();
+  };
   m.hidden = false;
   e.currentTarget.setAttribute("aria-expanded", "true");
   if (window.gsap && !Motion.reduced) {
@@ -122,6 +166,7 @@ document.getElementById("nav-more")?.addEventListener("click", (e) => {
   }
 });
 document.addEventListener("click", (e) => !e.target.closest("#more-menu") && closeMoreMenu());
+document.getElementById("open-palette").addEventListener("click", () => openPalette());
 
 // ================= DASHBOARD =================
 function readiness() {
@@ -188,10 +233,10 @@ function renderDashboard() {
   app.innerHTML = `
     <section class="hero">
       <div class="hero-text">
-        <div class="eyebrow">Your launchpad</div>
+        <div class="eyebrow">${new Date().toLocaleDateString(undefined, { weekday: "long", month: "long", day: "numeric" })}</div>
         <h1>Hi Mason — here's where you stand.</h1>
         <p>10th grade · Canyon Crest Academy · Class of 2029 · 4.0 GPA</p>
-        <div class="row"><a class="btn primary" href="#internships">Find internships</a><a class="btn glass" href="#skills">Strengthen skills</a></div>
+        <div class="row"><a class="btn light" href="#internships">Explore programs ${icon("arrow")}</a><a class="btn glass" href="#studio">Open Resume Studio</a></div>
       </div>
       <div class="hero-score">
         ${ring(r.total, { size: 132, label: r.total, tone: "hero" })}
@@ -301,7 +346,7 @@ function renderInternships() {
   app.innerHTML = `
     <div class="page-head">
       <div><h1>Internships & programs</h1><p class="muted">${all.length} real programs · every chance is an estimate built on a real rate and your profile.</p></div>
-      <div class="row"><button class="btn primary" id="find-new">✨ Find new programs</button><button class="btn" id="add-company">+ Add a company</button></div>
+      <div class="row"><button class="btn primary" id="find-new">${icon("sparkles")} Find new programs</button><button class="btn" id="add-company">+ Add a company</button></div>
     </div>
     <div class="card filterbar">
       <input type="search" id="search" placeholder="Search programs, companies, cities…" value="${esc(f.q)}">
@@ -365,7 +410,7 @@ function renderInternship(id) {
       </div>
       <div class="row">
         ${r.url ? `<a class="btn" href="${esc(r.url)}" target="_blank" rel="noopener">Official page ↗</a>` : ""}
-        ${s !== "ineligible" ? `<a class="btn primary" href="#generate/${encodeURIComponent(r.id)}">Generate tailored resume</a>` : ""}
+        ${s !== "ineligible" ? `<a class="btn primary" href="#generate/${encodeURIComponent(r.id)}">${icon("sparkles")} Generate tailored resume</a><a class="btn" href="#studio/${encodeURIComponent(r.id)}">${icon("scan")} ATS check</a>` : ""}
       </div>
     </div>
 
@@ -568,7 +613,7 @@ function renderGenResult(gen) {
     <div class="result">
       <div class="stack">
         <div class="row">
-          <button class="btn primary" data-act="save">Save to my resumes</button>
+          <button class="btn primary" data-act="studio">${icon("file")} Open in Resume Studio</button><button class="btn" data-act="save">Save version</button>
           <button class="btn" data-act="print">Save as PDF</button>
           <button class="btn" data-act="copy">Copy text</button>
           <button class="btn" data-act="txt">Download .txt</button>
@@ -594,6 +639,13 @@ function renderGenResult(gen) {
     <div class="stack">${questions.map((q, i) => practiceCard(q, i, role.id)).join("")}</div>`;
 
   wireResumeActions(out, resume, `${role.org} - ${role.title}`, score, role);
+  // Hand the tailored + reworded version to the Studio for live ATS editing.
+  out.querySelector('[data-act="studio"]').addEventListener("click", () => {
+    const s = studioStore();
+    s.drafts[role.id] = { ...JSON.parse(JSON.stringify(resume)), summary: [resume.summary.join(" ")] };
+    saveStudioStore(s);
+    go("studio/" + role.id);
+  });
   out.querySelectorAll("[data-revert]").forEach((b) =>
     b.addEventListener("click", () => {
       delete gen.map[b.dataset.revert];
@@ -668,8 +720,8 @@ function keywordCard(score, role) {
   if (!role.keywords.length) return "";
   return `<div class="card"><h3>Keywords <span class="small muted">★ = usually required</span></h3>
     <div class="chips">
-      ${score.matched.map((k) => `<span class="chip hit" title="Matched via “${esc(k.via)}”">✓ ${esc(k.term)}${k.req ? " ★" : ""}</span>`).join("")}
-      ${score.missing.map((k) => `<span class="chip miss">✗ ${esc(k.term)}${k.req ? " ★" : ""}</span>`).join("")}
+      ${score.matched.map((k) => `<span class="chip hit" title="Matched via “${esc(k.via)}”">${icon("check")}${esc(k.term)}${k.req ? " ★" : ""}</span>`).join("")}
+      ${score.missing.map((k) => `<span class="chip miss">${icon("x")}${esc(k.term)}${k.req ? " ★" : ""}</span>`).join("")}
     </div>
     ${score.missing.length ? `<p class="small muted">Missing keywords aren't added unless they're true. If you really have one, prove it in the Skill Bank; if not, it's something to learn.</p>` : `<p class="small muted">Every keyword is covered.</p>`}
   </div>`;
@@ -684,7 +736,7 @@ function practiceCard(q, i, roleId) {
     <h3 class="q">${esc(q.q)}</h3>
     <details><summary class="small">Talking points from your data</summary><ul class="small">${q.points.map((p) => `<li>${esc(p)}</li>`).join("") || "<li>Nothing in your data covers this yet — build it in the Skill Bank.</li>"}</ul></details>
     <textarea placeholder="Answer the way you'd say it out loud…">${esc(saved)}</textarea>
-    <div class="row"><button class="btn primary small" data-score>Score my answer</button>${Speech ? `<button class="btn small" data-mic>🎤 Dictate</button>` : ""}</div>
+    <div class="row"><button class="btn primary small" data-score>Score my answer</button>${Speech ? `<button class="btn small" data-mic>${icon("mic")} Dictate</button>` : ""}</div>
     <div data-out></div>
   </div>`;
 }
@@ -732,12 +784,12 @@ function dictate(textarea, btn) {
   };
   rec.onend = () => {
     dictate.rec = null;
-    btn.textContent = "🎤 Dictate";
+    btn.innerHTML = `${icon("mic")} Dictate`;
   };
   rec.onerror = (e) => toast("Mic error: " + e.error);
   rec.start();
   dictate.rec = rec;
-  btn.textContent = "⏹ Stop";
+  btn.innerHTML = `${icon("stop")} Stop`;
 }
 
 // ---------- add another company ----------
@@ -799,7 +851,7 @@ function renderColleges() {
     ${(() => {
       const p = collegeProfile();
       const n = p.courses.length + p.activities.length + p.awards.length + (p.tests.sat || p.tests.act ? 1 : 0);
-      return `<a class="card practice-cta" href="#profile"><div class="track-icon">🎓</div><div><h3>Your college profile</h3><p class="small muted">${n ? `${p.courses.length} courses · ${p.activities.length} activities · ${p.awards.length} extra awards${p.tests.sat || p.tests.act ? " · test score logged" : ""}` : "Add AP classes, activities, leadership and test scores so these chances use real numbers."}</p></div><span class="chev">›</span></a>`;
+      return `<a class="card practice-cta" href="#profile"><div class="track-icon">${icon("cap")}</div><div><h3>Your college profile</h3><p class="small muted">${n ? `${p.courses.length} courses · ${p.activities.length} activities · ${p.awards.length} extra awards${p.tests.sat || p.tests.act ? " · test score logged" : ""}` : "Add AP classes, activities, leadership and test scores so these chances use real numbers."}</p></div><span class="chev">›</span></a>`;
     })()}
     <div class="card filterbar">
       <div class="filter-selects">
@@ -974,7 +1026,7 @@ function renderCoach(skillId) {
               : st.stage === "done"
                 ? `<p class="small muted">That's every question for now. <button class="linkbtn" id="more-q">${AI.enabled() ? "Generate new questions" : "Start over with another experience"}</button></p>`
                 : `<textarea id="answer" placeholder="${st.stage === "bullet" ? "One resume line: strong verb + what you did + the number/result" : "Type your answer…"}"></textarea>
-                   <div class="row"><button class="btn primary" id="send">Send</button><button class="btn ghost small" id="skip">Skip question</button><button class="btn ghost small" id="switch">Switch experience</button>${Speech ? `<button class="btn ghost small" id="mic">🎤</button>` : ""}</div>`
+                   <div class="row"><button class="btn primary" id="send">Send</button><button class="btn ghost small" id="skip">Skip question</button><button class="btn ghost small" id="switch">Switch experience</button>${Speech ? `<button class="btn ghost small" id="mic" aria-label="Dictate">${icon("mic")}</button>` : ""}</div>`
           }
         </div>
       </section>
@@ -1083,7 +1135,7 @@ async function coachReply(skill, st, text) {
       return st.thread.push({ from: "coach", text: "Resume lines skip “I” and start with an action verb — like “Compared…”, “Built…”, “Tested…”. Give it one more try (at least 5 words)." });
     const r = addBulletFromCoach(skill, st, text);
     if (!r.ok) return st.thread.push({ from: "coach", text: r.msg });
-    st.thread.push({ from: "coach", text: `✅ Added to your resume under ${itemLabel(st.itemId)}.`, bulletId: r.b.id });
+    st.thread.push({ from: "coach", text: `Added to your resume under ${itemLabel(st.itemId)}.`, bulletId: r.b.id });
     return askNext(skill, st);
   }
 
@@ -1098,7 +1150,7 @@ async function coachReply(skill, st, text) {
     const r = await AI.coachTurn(skill, itemLabel(st.itemId), st.thread.slice(-16));
     if (r.bullet && st.itemId) {
       const added = addBulletFromCoach(skill, st, r.bullet);
-      if (added.ok) st.thread.push({ from: "coach", text: `✅ Added to your resume: “${added.b.text}”`, bulletId: added.b.id });
+      if (added.ok) st.thread.push({ from: "coach", text: `Added to your resume: “${added.b.text}”`, bulletId: added.b.id });
     }
     if (r.done || st.followups >= 4) {
       if (r.reply && !r.bullet) st.thread.push({ from: "coach", text: r.reply });
@@ -1124,7 +1176,8 @@ function renderResumes() {
   const ms = scoreResume(master, null);
   const saved = Store.get("resumes", []);
   app.innerHTML = `
-    <div class="page-head"><div><h1>Resumes</h1><p class="muted">Your master resume plus every tailored version you've saved.</p></div></div>
+    <a class="back" href="#studio">‹ Resume Studio</a>
+    <div class="page-head"><div><h1>Saved versions</h1><p class="muted">Your master resume plus every version you have saved from the Studio.</p></div><a class="btn primary" href="#studio">${icon("file")} Open Resume Studio</a></div>
     ${getSettings().phone ? "" : `<div class="notice info">Your phone number isn't on resumes yet — add it in <a href="#settings">Settings</a> (saved only in this browser).</div>`}
     <div class="list">
       <a class="list-row card" href="#resume/master">${ring(ms.total, { size: 52, label: ms.total, tone: chanceTone(ms.total) })}<div class="grow"><div class="row-title">Master resume</div><div class="small muted">Everything verified, in one place</div></div><span class="chev">›</span></a>

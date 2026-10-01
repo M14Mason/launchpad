@@ -6,7 +6,7 @@ const TRACKS = [
   {
     id: "networking",
     name: "Networking",
-    icon: "🤝",
+    icon: "users",
     blurb: "Introduce yourself, write cold emails that get answers, and turn conversations into opportunities.",
     lessons: [
       "Why networking beats cold applying",
@@ -22,21 +22,21 @@ const TRACKS = [
   {
     id: "python",
     name: "Python & coding",
-    icon: "🐍",
+    icon: "code",
     blurb: "Level up the skills behind your trading bot: clean code, data, APIs, testing and Git.",
     lessons: ["Writing clean functions", "Working with data in pandas", "APIs and JSON (like Alpaca)", "Testing your code with pytest", "Git and GitHub basics", "Building a backtest from scratch", "Debugging like a pro"],
   },
   {
     id: "ta",
     name: "Technical analysis",
-    icon: "📈",
+    icon: "trend",
     blurb: "Go deeper on the indicators your bot uses — and the traps that fool backtests.",
     lessons: ["Trend, support and resistance", "Moving averages and EMA crossovers", "RSI and mean reversion", "ATR, volatility and stop placement", "Position sizing and risk/reward", "Backtesting traps: overfitting and look-ahead bias", "Reading a chart end to end"],
   },
   {
     id: "interview",
     name: "Interviewing",
-    icon: "🎤",
+    icon: "mic",
     blurb: "Tell your story clearly with STAR, then practice out loud in a voice mock interview.",
     lessons: ["The STAR method", "Telling your trading-bot story", "Answering “Tell me about yourself”", "Questions to ask the interviewer"],
     practice: "mock",
@@ -87,13 +87,13 @@ function renderStudy() {
     <div class="grid cards2">${TRACKS.map((t) => {
       const p = trackProgress(t);
       return `<a class="card track" href="#study/${t.id}">
-        <div class="spread"><div class="track-icon">${t.icon}</div>${ring(p, { size: 54, tone: p >= 70 ? "good" : "accent" })}</div>
+        <div class="spread"><div class="track-icon">${icon(t.icon)}</div>${ring(p, { size: 54, tone: p >= 70 ? "good" : "accent" })}</div>
         <h2>${t.name}</h2><p class="small muted">${t.blurb}</p>
         <div class="small">${t.lessons.length} lessons${t.practice === "roleplay" ? " · live conversation practice" : t.practice === "mock" ? " · voice mock interview" : ""}</div></a>`;
     }).join("")}</div>
     <div class="grid cards2">
-      <a class="card practice-cta" href="#roleplay"><div class="track-icon">💬</div><div><h3>Practice a networking conversation</h3><p class="small muted">${lastRp ? `Last score ${lastRp.score}/10 — ${esc(lastRp.label)}` : "Claude plays a real person; you get a coaching tip after every message."}</p></div><span class="chev">›</span></a>
-      <a class="card practice-cta" href="#mock"><div class="track-icon">🎙️</div><div><h3>Voice mock interview</h3><p class="small muted">${lastMock ? `Last average ${lastMock.avg}/10` : "Answer out loud; get timed, transcribed and scored."}</p></div><span class="chev">›</span></a>
+      <a class="card practice-cta" href="#roleplay"><div class="track-icon">${icon("message")}</div><div><h3>Practice a networking conversation</h3><p class="small muted">${lastRp ? `Last score ${lastRp.score}/10 — ${esc(lastRp.label)}` : "Claude plays a real person; you get a coaching tip after every message."}</p></div><span class="chev">›</span></a>
+      <a class="card practice-cta" href="#mock"><div class="track-icon">${icon("mic")}</div><div><h3>Voice mock interview</h3><p class="small muted">${lastMock ? `Last average ${lastMock.avg}/10` : "Answer out loud; get timed, transcribed and scored."}</p></div><span class="chev">›</span></a>
     </div>`;
 }
 
@@ -103,14 +103,14 @@ function renderTrack(id) {
   const s = study();
   app.innerHTML = `
     <a class="back" href="#study">‹ Study</a>
-    <div class="page-head"><div><div class="eyebrow dark">${t.icon} Track</div><h1>${t.name}</h1><p class="muted">${t.blurb}</p></div>${ring(trackProgress(t), { size: 84, tone: "accent" })}</div>
+    <div class="page-head"><div><div class="eyebrow dark">Track</div><h1>${t.name}</h1><p class="muted">${t.blurb}</p></div>${ring(trackProgress(t), { size: 84, tone: "accent" })}</div>
     <div class="list">${t.lessons
       .map((title, i) => {
         const d = s.done[lessonKey(t.id, i)];
         return `<a class="list-row card" href="#lesson/${t.id}/${i}"><div class="lesson-num ${d ? "done" : ""}">${d ? "✓" : i + 1}</div><div class="grow"><div class="row-title">${esc(title)}</div><div class="small muted">${d ? `Quiz ${d.score}/3` : s.lessons[lessonKey(t.id, i)] ? "Ready to read" : "~5 min"}</div></div><span class="chev">›</span></a>`;
       })
       .join("")}</div>
-    ${t.practice === "roleplay" ? `<a class="btn primary" href="#roleplay">💬 Practice a networking conversation</a>` : t.practice === "mock" ? `<a class="btn primary" href="#mock">🎙️ Start a voice mock interview</a>` : ""}`;
+    ${t.practice === "roleplay" ? `<a class="btn primary" href="#roleplay">${icon("message")} Practice a networking conversation</a>` : t.practice === "mock" ? `<a class="btn primary" href="#mock">${icon("mic")} Start a voice mock interview</a>` : ""}`;
 }
 
 function renderLesson(arg) {
@@ -125,7 +125,7 @@ function renderLesson(arg) {
   app.innerHTML = `
     <a class="back" href="#study/${t.id}">‹ ${t.name}</a>
     <article class="card lesson">
-      <div class="eyebrow dark">${t.icon} Lesson ${i + 1} of ${t.lessons.length}</div>
+      <div class="eyebrow dark">Lesson ${i + 1} of ${t.lessons.length}</div>
       <h1>${esc(t.lessons[i])}</h1>
       <div id="lesson-body">${
         L
@@ -225,7 +225,7 @@ function renderRoleplay() {
     <a class="back" href="#roleplay" id="rp-exit">‹ Choose someone else</a>
     <div class="coach">
       <aside class="card coach-side">
-        <div class="track-icon big">💬</div><h2>${esc(persona.label)}</h2>
+        <div class="track-icon big">${icon("message")}</div><h2>${esc(persona.label)}</h2>
         <p class="small muted">${esc(persona.setting)}</p>
         <div class="callout small"><strong>Goal</strong><p>Introduce yourself, show genuine curiosity, and end with one small, specific ask (a tip, a follow-up, an email).</p></div>
         ${thread.length >= 4 && !feedback ? `<button class="btn primary block" id="rp-finish">Finish & get feedback</button>` : ""}
@@ -243,9 +243,9 @@ function renderRoleplay() {
       <section class="card chat">
         <div class="thread" id="thread">
           <div class="msg system">${esc(persona.setting)} You start.</div>
-          ${thread.map((m, i) => `<div class="msg ${m.from === "me" ? "me" : "coach"}">${esc(m.text)}</div>${tips[i] ? `<div class="tip">💡 ${esc(tips[i])}</div>` : ""}`).join("")}
+          ${thread.map((m, i) => `<div class="msg ${m.from === "me" ? "me" : "coach"}">${esc(m.text)}</div>${tips[i] ? `<div class="tip">${icon("bulb")}${esc(tips[i])}</div>` : ""}`).join("")}
         </div>
-        ${feedback ? "" : `<div class="composer"><textarea id="answer" placeholder="${thread.length ? "Your reply…" : "Hi! I'm Mason, a sophomore at Canyon Crest…"}"></textarea><div class="row"><button class="btn primary" id="send">Send</button>${Speech ? `<button class="btn ghost small" id="mic">🎤</button>` : ""}</div></div>`}
+        ${feedback ? "" : `<div class="composer"><textarea id="answer" placeholder="${thread.length ? "Your reply…" : "Hi! I'm Mason, a sophomore at Canyon Crest…"}"></textarea><div class="row"><button class="btn primary" id="send">Send</button>${Speech ? `<button class="btn ghost small" id="mic" aria-label="Dictate">${icon("mic")}</button>` : ""}</div></div>`}
       </section>
     </div>`;
   const th = document.getElementById("thread");
@@ -364,9 +364,9 @@ function renderMock() {
       <div class="mock-timer" id="mock-timer">0:00</div>
       <textarea id="mock-text" placeholder="${Speech ? "Tap the mic and answer out loud — your words appear here. You can also type." : "Type your answer…"}">${esc(mock.transcript)}</textarea>
       <div class="row center">
-        ${Speech ? `<button class="btn mic-btn" id="mock-mic">🎤 Start answering</button>` : ""}
+        ${Speech ? `<button class="btn mic-btn" id="mock-mic">${icon("mic")} Start answering</button>` : ""}
         <button class="btn primary" id="mock-submit">Submit answer</button>
-        <button class="btn ghost small" id="mock-repeat">🔊 Repeat question</button>
+        <button class="btn ghost small" id="mock-repeat">${icon("volume")} Repeat question</button>
       </div>
       <details><summary class="small">Talking points from your data</summary><ul class="small">${q.points.map((p) => `<li>${esc(p)}</li>`).join("")}</ul></details>
       <div id="mock-out"></div>
@@ -505,7 +505,7 @@ function outreachPanelHTML(r) {
       <label class="field"><span>Their email (optional)</span><input type="email" id="o-email" placeholder="name@company.com" autocomplete="off"></label>
     </div>
     <label class="field"><span>Context (optional)</span><input type="text" id="o-ctx" placeholder="e.g. found them on LinkedIn; met at the career fair"></label>
-    ${AI.enabled() ? `<button class="btn primary" id="o-go">✨ Draft email</button>` : `<p class="small muted">Add your API key in <a href="#settings">Settings</a> to draft emails.</p>`}
+    ${AI.enabled() ? `<button class="btn primary" id="o-go">${icon("sparkles")} Draft email</button>` : `<p class="small muted">Add your API key in <a href="#settings">Settings</a> to draft emails.</p>`}
     <div id="o-out"></div>
   </section>`;
 }
@@ -519,8 +519,8 @@ function wireOutreachPanel(r, rerender) {
       $("o-out").innerHTML = `
         <label class="field mt-s"><span>Subject</span><input type="text" id="o-subj" value="${esc(d.subject || "")}"></label>
         <label class="field"><span>Email — edit until it sounds like you</span><textarea id="o-body" class="essay-box">${esc(d.body)}</textarea></label>
-        ${chk.bad.length ? `<p class="small bad-text">⚠ Fact-check: ${chk.bad.map((n) => `“${esc(n)}”`).join(", ")} isn't in your data.</p>` : `<p class="small good-text">✓ Fact-check passed.</p>`}
-        ${chk.placeholders ? `<p class="small">✎ Fill in the [bracketed] parts before sending.</p>` : ""}
+        ${chk.bad.length ? `<p class="small bad-text">${icon("alert")} Fact-check: ${chk.bad.map((n) => `“${esc(n)}”`).join(", ")} isn't in your data.</p>` : `<p class="small good-text">${icon("check")} Fact-check passed.</p>`}
+        ${chk.placeholders ? `<p class="small">${icon("pen")} Fill in the [bracketed] parts before sending.</p>` : ""}
         <div class="row"><button class="btn primary" id="o-mail">Open in email app</button><button class="btn" id="o-copy">Copy</button><button class="btn" id="o-save">Save draft</button></div>`;
       $("o-mail").onclick = () => {
         if (/\[[^\]]+\]/.test($("o-body").value) && !confirm("There are still [bracketed] parts to fill in. Open anyway?")) return;
@@ -541,7 +541,7 @@ function openProgramFinder() {
   modalBody.innerHTML = `
     <div class="spread"><h2>Find new programs</h2><button class="btn ghost" data-close>✕</button></div>
     <p class="muted">Claude searches the web for real ${esc(GOALS[goal()].label.toLowerCase())} programs you could apply to that aren't in your list yet. Takes about a minute.</p>
-    ${AI.enabled() ? `<button class="btn primary" id="pf-go">✨ Search now</button>` : `<p>Add your API key in <a href="#settings">Settings</a> first.</p>`}
+    ${AI.enabled() ? `<button class="btn primary" id="pf-go">${icon("sparkles")} Search now</button>` : `<p>Add your API key in <a href="#settings">Settings</a> first.</p>`}
     <div id="pf-out"></div>`;
   if (!modal.open) modal.showModal();
   modalBody.querySelector("[data-close]").onclick = () => modal.close();
