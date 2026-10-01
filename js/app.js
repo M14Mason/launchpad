@@ -33,6 +33,36 @@ const NAV = [
     ).join("") +
     `<button type="button" id="nav-more" class="nav-more" aria-haspopup="true" aria-expanded="false">${icon("more")}<span class="lbl-s">More</span></button>`;
 })();
+// ---------- theme: System / Light / Dark ----------
+function applyTheme(t) {
+  const root = document.documentElement;
+  if (t === "dark" || t === "light") root.setAttribute("data-theme", t);
+  else root.removeAttribute("data-theme");
+  const dark = t === "dark" || (t !== "light" && window.matchMedia("(prefers-color-scheme: dark)").matches);
+  document.querySelector('meta[name="theme-color"]')?.setAttribute("content", dark ? "#09090b" : "#fafafa");
+  document.querySelectorAll("[data-theme-btn]").forEach((b) => b.setAttribute("aria-checked", String(b.dataset.themeBtn === (t || "system"))));
+}
+function setTheme(t) {
+  Store.set("settings", { ...getSettings(), theme: t });
+  applyTheme(t);
+}
+(function buildThemeSwitch() {
+  const el = document.getElementById("theme-switch");
+  el.innerHTML = [
+    ["system", "monitor", "System"],
+    ["light", "sun", "Light"],
+    ["dark", "moon", "Dark"],
+  ]
+    .map(([k, i, l]) => `<button type="button" role="radio" data-theme-btn="${k}" title="${l}" aria-label="${l} theme">${icon(i)}</button>`)
+    .join("");
+  el.addEventListener("click", (e) => {
+    const b = e.target.closest("[data-theme-btn]");
+    if (b) setTheme(b.dataset.themeBtn);
+  });
+  applyTheme(getSettings().theme || "system");
+  window.matchMedia("(prefers-color-scheme: dark)").addEventListener?.("change", () => applyTheme(getSettings().theme || "system"));
+})();
+
 function moveNavIndicator() {
   const a = document.querySelector("#nav a.active");
   const ind = document.querySelector(".nav-indicator");
@@ -111,18 +141,23 @@ function empty(msg) {
 }
 
 // ---------- router ----------
-const NAV_FOR = { dashboard: "dashboard", tracker: "tracker", internships: "internships", internship: "internships", generate: "internships", colleges: "colleges", college: "colleges", skills: "skills", coach: "skills", resumes: "studio", resume: "studio", studio: "studio", settings: "settings", study: "study", lesson: "study", roleplay: "study", mock: "study", profile: "colleges" };
+const NAV_FOR = { dashboard: "dashboard", tracker: "tracker", internships: "internships", internship: "internships", generate: "internships", colleges: "colleges", college: "colleges", skills: "skills", coach: "skills", resumes: "studio", resume: "studio", studio: "studio", settings: "settings", study: "study", lesson: "study", roleplay: "study", mock: "study", practice: "study", quiz: "study", profile: "colleges" };
 function route() {
   const [view = "dashboard", ...rest] = location.hash.slice(1).split("/");
   const id = decodeURIComponent(rest.join("/"));
   document.querySelectorAll("#nav a").forEach((a) => a.classList.toggle("active", a.dataset.nav === (NAV_FOR[view] || "dashboard")));
   document.getElementById("nav-more")?.classList.toggle("active", !!document.querySelector("#nav a.more-item.active"));
   moveNavIndicator();
-  const views = { dashboard: renderDashboard, internships: renderInternships, internship: renderInternship, generate: renderGenerate, colleges: renderColleges, college: renderCollege, skills: renderSkills, coach: renderCoach, resumes: renderResumes, resume: renderResumeView, settings: renderSettings, pair: renderPair, tracker: renderTracker, study: (id) => (id ? renderTrack(id) : renderStudy()), lesson: renderLesson, roleplay: renderRoleplay, mock: renderMock, profile: renderCollegeProfile, studio: renderStudio };
+  const views = { dashboard: renderDashboard, internships: renderInternships, internship: renderInternship, generate: renderGenerate, colleges: renderColleges, college: renderCollege, skills: renderSkills, coach: renderCoach, resumes: renderResumes, resume: renderResumeView, settings: renderSettings, pair: renderPair, tracker: renderTracker, study: (id) => (id ? renderTrack(id) : renderStudy()), lesson: renderLesson, roleplay: () => go("practice/networking"), mock: () => go("practice/interview"), practice: renderPractice, quiz: renderQuiz, profile: renderCollegeProfile, studio: renderStudio };
   // Leaving a page stops any live mic or spoken question.
   if (dictate.rec) dictate.rec.stop();
   try {
-    window.speechSynthesis?.cancel();
+    Voice.cancel();
+    if (P.phase === "live" && view !== "practice") {
+      P.listener?.stop();
+      P.listening = false;
+      P.status = "Paused — tap Resume when you are back.";
+    }
   } catch {}
   (views[view] || renderDashboard)(id);
   const animate = !route.keepScroll && !route.quiet;
@@ -175,7 +210,9 @@ function readiness() {
   const skills = allSkills(bank).map((s) => cachedSkillScore(s, bank).total);
   const skillAvg = Math.round(skills.reduce((a, b) => a + b, 0) / skills.length);
   const reps = Object.values(Store.get("practice", {})).filter((t) => t && t.trim().length > 40).length;
-  const interview = Math.min(100, 20 + reps * 16);
+  // Interview readiness: your recent spoken-practice scores when you have them, otherwise written practice reps.
+  const spoken = (study().sessions || []).slice(0, 5);
+  const interview = spoken.length ? Math.round(spoken.reduce((n, s) => n + s.score, 0) / spoken.length) : Math.min(100, 20 + reps * 16);
   return { master, skillAvg, reps, interview, total: Math.round(0.4 * master + 0.35 * skillAvg + 0.25 * interview) };
 }
 
@@ -249,7 +286,7 @@ function renderDashboard() {
       ${[
         ["Resume", r.master, "Master resume score", "#resumes"],
         ["Skill proof", r.skillAvg, "Average Skill Bank score", "#skills"],
-        ["Interview", r.interview, `${r.reps} practice answer${r.reps === 1 ? "" : "s"} written`, "#internships"],
+        ["Interview", r.interview, (study().sessions || []).length ? `Avg of your last ${Math.min(5, study().sessions.length)} spoken sessions` : "Try a spoken practice session", "#practice"],
         ["Open to you", open.length, "Programs you can apply to now", "#internships", true],
       ]
         .map(([k, v, sub, href, raw]) => `<a class="card stat" href="${href}"><div class="k">${k}</div><div class="stat-v">${v}${raw ? "" : '<span class="muted">/100</span>'}</div><div class="small muted">${sub}</div>${raw ? "" : `<div class="bar"><i style="width:${v}%"></i></div>`}</a>`)
@@ -410,7 +447,7 @@ function renderInternship(id) {
       </div>
       <div class="row">
         ${r.url ? `<a class="btn" href="${esc(r.url)}" target="_blank" rel="noopener">Official page ↗</a>` : ""}
-        ${s !== "ineligible" ? `<a class="btn primary" href="#generate/${encodeURIComponent(r.id)}">${icon("sparkles")} Generate tailored resume</a><a class="btn" href="#studio/${encodeURIComponent(r.id)}">${icon("scan")} ATS check</a>` : ""}
+        ${s !== "ineligible" ? `<a class="btn primary" href="#generate/${encodeURIComponent(r.id)}">${icon("sparkles")} Generate tailored resume</a><a class="btn" href="#studio/${encodeURIComponent(r.id)}">${icon("scan")} ATS check</a><a class="btn" href="#practice/interview/${encodeURIComponent(r.id)}">${icon("mic")} Practice interview</a>` : ""}
       </div>
     </div>
 
@@ -1224,6 +1261,8 @@ function renderSettings() {
   app.innerHTML = `
     <div class="page-head"><div><h1>Settings</h1><p class="muted">Everything here stays in this browser — none of it goes into the GitHub repo.</p></div></div>
     <div class="grid cards2">
+      <div class="card"><h3>Appearance</h3><label class="field"><span>Theme</span><select id="theme-select">${["system", "light", "dark"].map((t) => `<option value="${t}" ${(getSettings().theme || "system") === t ? "selected" : ""}>${t[0].toUpperCase() + t.slice(1)}</option>`).join("")}</select></label><p class="small muted">System follows your device's light/dark setting.</p></div>
+      <div class="card">${micCheckHTML()}</div>
       <div class="card"><h3>Contact</h3>
         <label class="field"><span>Phone (printed on resumes)</span><input type="tel" id="phone" value="${esc(s.phone)}" placeholder="(415) 000-0000"></label>
         <label class="field"><span>Your goal (ranks matches and next moves)</span><select id="goal">${Object.entries(GOALS)
@@ -1279,6 +1318,8 @@ function renderSettings() {
     })
   );
   wireSyncCard();
+  wireMicCheck();
+  $("theme-select").addEventListener("change", (e) => setTheme(e.target.value));
   $("reset").onclick = () => {
     if (!confirm("Erase all Skill Bank answers, coach chats, saved resumes, added companies and settings from this browser? (A restore point is saved first.)")) return;
     Backup.snapshot("Automatic — before erasing data");

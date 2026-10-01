@@ -263,7 +263,7 @@ He's a 10th grader who built a Python trading bot (Alpaca API, EMA/RSI/ATR strat
 Be accurate and practical; ~5 minutes of reading; plain language; ${track.id === "python" ? "include short, correct Python code examples in ``` fences" : "no fluff"}.${track.id === "ta" ? " This is education, not financial advice — say so once, briefly." : ""}
 Return ONLY JSON:
 {"intro": str, "sections": [{"heading": str, "body": str}] (3-4), "example": str, "keyPoints": [str] (3-5),
- "quiz": [{"q": str, "options": [4 strings], "answer": 0-3, "why": str}] (3 questions), "practice": "one concrete thing to do this week"}`,
+ "quiz": [{"q": str, "options": [4 strings], "answer": 0-3, "why": str}] (5 questions, mixing recall, application and one tied to his projects), "practice": "one concrete thing to do this week"}`,
       { effort: "medium", maxTokens: 8000 }
     );
     const j = this.parseJSON(text, null);
@@ -359,5 +359,97 @@ ${resumeToText(resume)}`,
       { effort: "medium" }
     );
     return text.trim().replace(/^["']|["']$/g, "");
+  },
+});
+
+// ---------- spoken practice (interview · financial planning · sales · networking) ----------
+const DIFFICULTY_NOTE = {
+  easy: "Friendly and forgiving; give him openings and only light pushback.",
+  realistic: "Like a normal busy professional: some pushback, expects specifics.",
+  tough: "Skeptical and demanding: real objections, interrupts vague answers, asks hard follow-ups.",
+};
+Object.assign(AI, {
+  async practiceSetup(mode, opts) {
+    const spec = {
+      interview: `A ${opts.interviewType} interview${opts.role ? ` for: ${opts.role}` : ""}. You are the interviewer. Plan ${opts.count} main questions (mix in natural follow-ups). Types: behavioral = STAR stories; python = his bot/apps, debugging, data, APIs; markets = EMA/RSI/ATR, risk/reward, markets, a stock pitch; financial planning = budgeting, emergency funds, compound interest, risk tolerance, diversification, Roth IRA basics, client empathy; college = curiosity, why this school, contribution; mixed = blend. End by asking if he has questions for you, answer them briefly, then close.`,
+      fpclient: "A first financial-planning meeting. Mason is the planner. You are the client with a realistic money situation (income, expenses, debts, savings, goals, worries). Keep key details hidden unless he asks good discovery questions. Judge whether his advice is clear, suitable and empathetic.",
+      sales: opts.product === "choose" ? "A sales conversation. Mason will pitch a product of his choice — you don't know what yet. You are a realistic buyer. React to whatever he pitches, raise objections that fit it, and decide at the end whether to buy." : `A sales conversation. Mason is selling: ${opts.product}. You are a realistic buyer with hidden needs, a budget and objections. Decide at the end whether to buy.`,
+      networking: `A networking conversation. You are ${opts.persona || "a professional in finance"}. Mason is a high school student introducing himself. Respond naturally; reward curiosity and a specific, small ask.`,
+    }[mode];
+    const text = await this.ask(
+      `Create a spoken role-play scenario. ${spec}
+Difficulty: ${opts.difficulty} — ${DIFFICULTY_NOTE[opts.difficulty]}
+Return ONLY JSON:
+{"title": str, "counterpart": {"name": realistic first+last name, "role": str},
+ "brief": "2 sentences shown to Mason before starting (what he knows; never reveal hidden details)",
+ "opening": "your first spoken line in character, or empty string if Mason should speak first",
+ "hidden": "private notes only you see: situation, goals, objections, question plan",
+ "objectives": ["3-5 things a great performance does in this scenario"],
+ "maxTurns": number between 6 and 16}`,
+      { effort: "medium", maxTokens: 3000 }
+    );
+    const j = this.parseJSON(text, null);
+    if (!j || !j.counterpart || typeof j.brief !== "string") throw new Error("Couldn't set up the scenario — try again.");
+    return j;
+  },
+  async practiceTurn(sc, thread, mode, difficulty) {
+    const mine = thread.filter((t) => t.from === "me").length;
+    const text = await this.ask(
+      `ROLE-PLAY (spoken). You are ${sc.counterpart.name}, ${sc.counterpart.role}. Scenario: ${sc.title}.
+Private notes: ${sc.hidden}
+Difficulty: ${difficulty} — ${DIFFICULTY_NOTE[difficulty]}
+Rules: stay fully in character; this is spoken aloud, so 1-3 short natural sentences, no lists, no markdown, no emojis, no stage directions. React to what Mason actually said (if he's vague, press; if he asks a good question, answer with real detail). Never coach him. ${mine >= sc.maxTurns ? "Time is up: give a natural closing line now." : "When the conversation reaches a natural end, give a closing line."}
+Transcript:
+${thread.map((t) => `${t.from === "me" ? "Mason" : sc.counterpart.name}: ${t.text}`).join("\n")}
+Return ONLY JSON: {"reply": "what you say next", "end": true/false}`,
+      { effort: "low", maxTokens: 1200 }
+    );
+    const j = this.parseJSON(text, null);
+    if (!j || typeof j.reply !== "string") throw new Error("Lost the conversation for a second — say that again?");
+    return { reply: j.reply.replace(/[*_#]/g, "").trim(), end: !!j.end };
+  },
+  async practiceAnalyze(sc, thread, metrics, mode) {
+    const rubric = {
+      interview: ["Content & examples", "Structure (STAR)", "Relevance", "Delivery & confidence", "Engagement (questions asked)"],
+      fpclient: ["Rapport & empathy", "Discovery questions", "Advice quality & suitability", "Clarity (no jargon)", "Delivery & confidence"],
+      sales: ["Opening & rapport", "Discovery of needs", "Value pitch", "Objection handling", "Closing & next step"],
+      networking: ["Introduction", "Curiosity & questions", "Specific ask", "Listening & follow-up", "Delivery & confidence"],
+    }[mode];
+    const text = await this.ask(
+      `Analyze Mason's spoken ${mode === "fpclient" ? "financial-planning client meeting" : mode} practice. He's a high school sophomore — be honest and specific, not harsh.
+Scenario: ${sc.title}. Counterpart: ${sc.counterpart.name}, ${sc.counterpart.role}. What great looks like: ${(sc.objectives || []).join("; ")}
+Measured speech (from his mic/transcript): ${JSON.stringify(metrics)}
+Guide: conversational pace ~130-160 wpm; fillers under ~2 per 100 words is strong; pitch variation under ~1.5 semitones sounds monotone, ~2-5 is expressive; hedges ("I guess", "maybe") weaken authority.
+Transcript:
+${thread.map((t) => `${t.from === "me" ? "Mason" : sc.counterpart.name}: ${t.text}`).join("\n")}
+
+Score each category 0-100: ${rubric.join(", ")}.
+Return ONLY JSON:
+{"overall": 0-100, "verdict": "one sentence", "categories": [{"name": str, "score": 0-100, "note": str}],
+ "tone": "2-3 sentences on tone, confidence and wording, citing the measured numbers",
+ "strengths": [2-4 str],
+ "improvements": [{"issue": str, "quote": "his exact words from the transcript", "better": "a stronger way to say it using only his facts"}] (3-5),
+ "outcome": "${mode === "sales" ? "did the buyer buy and why" : mode === "fpclient" ? "would the client trust him and come back" : "would you advance him"}",
+ "nextDrill": "one specific thing to practice next time"}`,
+      { effort: "medium", maxTokens: 6000 }
+    );
+    const j = this.parseJSON(text, null);
+    if (!j || typeof j.overall !== "number") throw new Error("The analysis came back in an unexpected format — tap Analyze again.");
+    return j;
+  },
+});
+
+Object.assign(AI, {
+  // Fresh practice-quiz questions for a track (different every time).
+  async quiz(track, lessons) {
+    const text = await this.ask(
+      `Write a fresh 6-question multiple-choice practice quiz for Mason on "${track.name}", covering: ${lessons.join("; ")}.
+Mix: 2 concept checks, 2 applied scenarios, 1 tied to his real projects (trading bot, Keen, Titan, photography) where it fits, 1 harder stretch question. Accurate, unambiguous, one correct answer, plausible distractors. Vary the question wording each time (seed ${Math.random().toString(36).slice(2, 7)}).
+Return ONLY JSON: [{"q": str, "options": [4 strings], "answer": 0-3, "why": "one-sentence explanation"}]`,
+      { effort: "low", maxTokens: 5000 }
+    );
+    const qs = this.parseJSON(text, null);
+    if (!Array.isArray(qs) || !qs.length || !qs.every((q) => q.q && Array.isArray(q.options) && q.options.length === 4 && Number.isInteger(q.answer))) throw new Error("The quiz came back in an unexpected format — try again.");
+    return qs;
   },
 });

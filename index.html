@@ -13,6 +13,13 @@
   <link rel="apple-touch-icon" href="icons/icon-180.png">
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns=%27http://www.w3.org/2000/svg%27 viewBox=%270 0 32 32%27%3E%3Crect width=%2732%27 height=%2732%27 rx=%278%27 fill=%27%2309090b%27/%3E%3Cpath d=%27M9 21l5-5 3.5 3.5L23 12M18.5 12H23v4.5%27 stroke=%27white%27 stroke-width=%272.6%27 fill=%27none%27 stroke-linecap=%27round%27 stroke-linejoin=%27round%27/%3E%3C/svg%3E">
   <title>Launchpad — Mason Ngo</title>
+  <script>
+    // Apply the saved theme before first paint (no white flash in dark mode).
+    try {
+      var t = JSON.parse(localStorage.getItem("rb.settings") || "{}").theme;
+      if (t === "dark" || t === "light") document.documentElement.setAttribute("data-theme", t);
+    } catch (e) {}
+  </script>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Geist:wght@300;400;500;600;700&family=Geist+Mono:wght@400;500;600&display=swap" rel="stylesheet">
@@ -25,7 +32,7 @@
       <button class="search-btn" id="open-palette" type="button"></button>
       <nav id="nav"></nav>
       <div id="more-menu" class="more-menu" hidden></div>
-      <div class="sidebar-foot">Built only from your verified data. Chances and scores are estimates grounded in published rates and research.</div>
+      <div class="theme-switch" id="theme-switch" role="radiogroup" aria-label="Theme"></div>
     </aside>
     <main id="app" tabindex="-1"></main>
   </div>
@@ -46,6 +53,8 @@
   <script src="js/ai.js"></script>
   <script src="js/tracker.js"></script>
   <script src="js/features.js"></script>
+  <script src="js/voice.js"></script>
+  <script src="js/convo.js"></script>
   <script src="js/ats.js"></script>
   <script src="js/studio.js"></script>
   <script src="js/motion.js"></script>

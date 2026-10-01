@@ -8,38 +8,75 @@ const TRACKS = [
     name: "Networking",
     icon: "users",
     blurb: "Introduce yourself, write cold emails that get answers, and turn conversations into opportunities.",
-    lessons: [
-      "Why networking beats cold applying",
-      "Your 30-second introduction",
-      "Cold emails that actually get answered",
-      "Talking to people at events and career fairs",
-      "Ask for advice, not a job",
-      "Following up without being annoying",
-      "LinkedIn for a high schooler",
-    ],
-    practice: "roleplay",
+    // New lessons are appended so saved progress (keyed by position) stays valid.
+    lessons: ["Why networking beats cold applying", "Your 30-second introduction", "Cold emails that actually get answered", "Talking to people at events and career fairs", "Ask for advice, not a job", "Following up without being annoying", "LinkedIn for a high schooler", "Your elevator pitch for finance roles", "Informational interviews: questions that impress", "Asking a teacher or mentor for a recommendation", "Keeping relationships warm over months and years"],
+    practice: "networking",
+  },
+  {
+    id: "finance",
+    name: "Finance fundamentals",
+    icon: "briefcase",
+    blurb: "The core ideas every finance interviewer expects: markets, statements, valuation, rates and risk.",
+    lessons: ["How the stock market actually works", "Reading an income statement", "Balance sheets and cash flow", "Valuation basics: P/E, EV/EBITDA and DCF", "Interest rates, inflation and the Fed", "Diversification and portfolio risk", "Options basics: calls, puts and risk", "How banks, hedge funds and asset managers make money"],
+  },
+  {
+    id: "planning",
+    name: "Financial planning",
+    icon: "target",
+    blurb: "Budgeting, saving, investing and retirement — and how to talk to a real client about money.",
+    lessons: ["Budgeting and the 50/30/20 rule", "Emergency funds and short-term savings", "Compound interest and starting early", "Risk tolerance and time horizon", "Roth IRA, 401(k) and tax-advantaged accounts", "Index funds vs. picking stocks", "Running a first client meeting: discovery questions", "Explaining money without jargon"],
+    practice: "fp",
+  },
+  {
+    id: "quant",
+    name: "Algorithmic trading",
+    icon: "code",
+    blurb: "Take your bot further: rigorous backtests, realistic costs, risk metrics and live vs. paper trading.",
+    lessons: ["From trading idea to testable rule", "Walk-forward and out-of-sample testing", "Transaction costs, slippage and fills", "Risk metrics: Sharpe, drawdown and win rate", "Paper trading vs. live trading with Alpaca", "Avoiding overfitting with simpler strategies", "Logging and monitoring a bot that runs all day"],
   },
   {
     id: "python",
     name: "Python & coding",
     icon: "code",
     blurb: "Level up the skills behind your trading bot: clean code, data, APIs, testing and Git.",
-    lessons: ["Writing clean functions", "Working with data in pandas", "APIs and JSON (like Alpaca)", "Testing your code with pytest", "Git and GitHub basics", "Building a backtest from scratch", "Debugging like a pro"],
+    lessons: ["Writing clean functions", "Working with data in pandas", "APIs and JSON (like Alpaca)", "Testing your code with pytest", "Git and GitHub basics", "Building a backtest from scratch", "Debugging like a pro", "Classes and structure for a bigger bot", "Scheduling and async: running code all day", "Charts with matplotlib", "Building a small API with Flask"],
   },
   {
     id: "ta",
     name: "Technical analysis",
     icon: "trend",
     blurb: "Go deeper on the indicators your bot uses — and the traps that fool backtests.",
-    lessons: ["Trend, support and resistance", "Moving averages and EMA crossovers", "RSI and mean reversion", "ATR, volatility and stop placement", "Position sizing and risk/reward", "Backtesting traps: overfitting and look-ahead bias", "Reading a chart end to end"],
+    lessons: ["Trend, support and resistance", "Moving averages and EMA crossovers", "RSI and mean reversion", "ATR, volatility and stop placement", "Position sizing and risk/reward", "Backtesting traps: overfitting and look-ahead bias", "Reading a chart end to end", "Volume and VWAP", "Multi-timeframe analysis", "Keeping a trading journal"],
+  },
+  {
+    id: "ai",
+    name: "AI & data",
+    icon: "sparkles",
+    blurb: "How the AI in your apps works, and the learning science behind Keen.",
+    lessons: ["How large language models work", "Using AI APIs safely in your apps", "Machine learning basics with scikit-learn", "Spaced repetition: the science behind Keen", "Measuring whether an app actually helps users"],
   },
   {
     id: "interview",
     name: "Interviewing",
     icon: "mic",
-    blurb: "Tell your story clearly with STAR, then practice out loud in a voice mock interview.",
-    lessons: ["The STAR method", "Telling your trading-bot story", "Answering “Tell me about yourself”", "Questions to ask the interviewer"],
-    practice: "mock",
+    blurb: "Tell your story clearly with STAR, then practice out loud with a voice interviewer.",
+    lessons: ["The STAR method", "Telling your trading-bot story", "Answering “Tell me about yourself”", "Questions to ask the interviewer", "Answering technical questions out loud", "Talking about weaknesses honestly", "Interviewing for finance programs", "Video interview setup and etiquette"],
+    practice: "interview",
+  },
+  {
+    id: "sales",
+    name: "Sales & persuasion",
+    icon: "target",
+    blurb: "Discovery, pitching value, handling objections and closing — then sell out loud.",
+    lessons: ["Discovery: find the real problem first", "Pitching value, not features", "Handling objections calmly", "Closing and asking for the next step", "Selling your own product (Keen or Titan)"],
+    practice: "sales",
+  },
+  {
+    id: "photo",
+    name: "Photography business",
+    icon: "award",
+    blurb: "Turn your photography into paid work: pricing, clients, portfolio and a faster Lightroom workflow.",
+    lessons: ["Pricing your photography", "Finding and keeping clients", "Building a portfolio that sells", "A faster Lightroom workflow", "Contracts, usage rights and getting paid"],
   },
 ];
 const PERSONAS = [
@@ -78,41 +115,153 @@ function richText(s) {
     .join("");
 }
 
-function renderStudy() {
+// Consecutive days (ending today or yesterday) with any study activity: lesson, quiz, or spoken practice.
+function studyStreak() {
   const s = study();
-  const lastRp = s.roleplays[0];
-  const lastMock = s.mocks[0];
+  const days = new Set(
+    [...Object.values(s.done).map((d) => d.at), ...(s.quizzes || []).map((q) => q.at), ...(s.sessions || []).map((x) => x.at), ...s.roleplays.map((r) => r.at), ...s.mocks.map((m) => m.at)]
+      .filter(Boolean)
+      .map((t) => new Date(t).toDateString())
+  );
+  const d = new Date();
+  if (!days.has(d.toDateString())) d.setDate(d.getDate() - 1);
+  let n = 0;
+  while (days.has(d.toDateString())) {
+    n++;
+    d.setDate(d.getDate() - 1);
+  }
+  return n;
+}
+function studyStats() {
+  const s = study();
+  const scores = [...Object.values(s.done).map((d) => (d.score / (d.of || 3)) * 100), ...(s.quizzes || []).map((q) => (q.score / q.of) * 100)];
+  return {
+    streak: studyStreak(),
+    lessons: Object.keys(s.done).length,
+    total: TRACKS.reduce((n, t) => n + t.lessons.length, 0),
+    quizAvg: scores.length ? Math.round(scores.reduce((a, b) => a + b, 0) / scores.length) : null,
+    sessions: (s.sessions || []).length,
+  };
+}
+const PRACTICE_LINK = { networking: "networking", fp: "fp", interview: "interview", sales: "sales" };
+
+function renderStudy() {
+  const st = studyStats();
+  const last = (mode) => (study().sessions || []).find((x) => x.mode === mode);
   app.innerHTML = `
-    <div class="page-head"><div><h1>Study</h1><p class="muted">Short lessons, quick quizzes and live practice — built around your projects and goals.</p></div></div>
+    <div class="page-head"><div><h1>Study</h1><p class="muted">Short lessons, quizzes and spoken practice — built around your projects and goals.</p></div></div>
+    <div class="stats">
+      <div class="card stat"><div class="k">${icon("flame")} Study streak</div><div class="stat-v">${st.streak}<span class="muted"> day${st.streak === 1 ? "" : "s"}</span></div></div>
+      <div class="card stat"><div class="k">Lessons done</div><div class="stat-v">${st.lessons}<span class="muted">/${st.total}</span></div></div>
+      <div class="card stat"><div class="k">Quiz average</div><div class="stat-v">${st.quizAvg ?? "—"}${st.quizAvg != null ? '<span class="muted">%</span>' : ""}</div></div>
+      <div class="card stat"><div class="k">Practice sessions</div><div class="stat-v">${st.sessions}</div></div>
+    </div>
+    <section><div class="section-head"><h2>Speak it out loud</h2><a class="small" href="#practice">All practice options</a></div>
+      <div class="grid cards2">${MODES.map((m) => {
+        const l = last(m.id === "fp" ? "fpclient" : m.id);
+        return `<a class="card practice-cta" href="#practice/${m.id}"><div class="track-icon">${icon(m.icon)}</div><div class="grow"><h3>${m.label}</h3><p class="small muted">${l ? `Last score ${l.score}/100` : esc(m.blurb)}</p></div><span class="chev">${icon("chevron")}</span></a>`;
+      }).join("")}</div></section>
+    <section><div class="section-head"><h2>Tracks</h2><span class="small muted">${TRACKS.length} tracks · ${st.total} lessons</span></div>
     <div class="grid cards2">${TRACKS.map((t) => {
       const p = trackProgress(t);
       return `<a class="card track" href="#study/${t.id}">
-        <div class="spread"><div class="track-icon">${icon(t.icon)}</div>${ring(p, { size: 54, tone: p >= 70 ? "good" : "accent" })}</div>
+        <div class="spread"><div class="track-icon">${icon(t.icon)}</div>${ring(p, { size: 50, tone: p >= 70 ? "good" : "accent" })}</div>
         <h2>${t.name}</h2><p class="small muted">${t.blurb}</p>
-        <div class="small">${t.lessons.length} lessons${t.practice === "roleplay" ? " · live conversation practice" : t.practice === "mock" ? " · voice mock interview" : ""}</div></a>`;
-    }).join("")}</div>
-    <div class="grid cards2">
-      <a class="card practice-cta" href="#roleplay"><div class="track-icon">${icon("message")}</div><div><h3>Practice a networking conversation</h3><p class="small muted">${lastRp ? `Last score ${lastRp.score}/10 — ${esc(lastRp.label)}` : "Claude plays a real person; you get a coaching tip after every message."}</p></div><span class="chev">›</span></a>
-      <a class="card practice-cta" href="#mock"><div class="track-icon">${icon("mic")}</div><div><h3>Voice mock interview</h3><p class="small muted">${lastMock ? `Last average ${lastMock.avg}/10` : "Answer out loud; get timed, transcribed and scored."}</p></div><span class="chev">›</span></a>
-    </div>`;
+        <div class="small">${t.lessons.length} lessons · unlimited quizzes${t.practice ? " · spoken practice" : ""}</div></a>`;
+    }).join("")}</div></section>`;
 }
 
 function renderTrack(id) {
   const t = TRACKS.find((x) => x.id === id);
   if (!t) return (app.innerHTML = empty(`Track not found. <a href="#study">Back</a>`));
   const s = study();
+  const qz = (s.quizzes || []).filter((q) => q.track === t.id);
   app.innerHTML = `
     <a class="back" href="#study">‹ Study</a>
-    <div class="page-head"><div><div class="eyebrow dark">Track</div><h1>${t.name}</h1><p class="muted">${t.blurb}</p></div>${ring(trackProgress(t), { size: 84, tone: "accent" })}</div>
+    <div class="page-head"><div><div class="eyebrow">Track</div><h1>${t.name}</h1><p class="muted">${t.blurb}</p></div>${ring(trackProgress(t), { size: 84, tone: "accent" })}</div>
+    <div class="row">
+      <a class="btn primary" href="#quiz/${t.id}">${icon("sparkles")} Practice quiz</a>
+      ${t.practice ? `<a class="btn" href="#practice/${PRACTICE_LINK[t.practice]}">${icon("mic")} Practice out loud</a>` : ""}
+      ${qz.length ? `<span class="small muted">Best quiz: ${Math.max(...qz.map((q) => Math.round((q.score / q.of) * 100)))}% · ${qz.length} taken</span>` : ""}
+    </div>
     <div class="list">${t.lessons
       .map((title, i) => {
         const d = s.done[lessonKey(t.id, i)];
-        return `<a class="list-row card" href="#lesson/${t.id}/${i}"><div class="lesson-num ${d ? "done" : ""}">${d ? "✓" : i + 1}</div><div class="grow"><div class="row-title">${esc(title)}</div><div class="small muted">${d ? `Quiz ${d.score}/3` : s.lessons[lessonKey(t.id, i)] ? "Ready to read" : "~5 min"}</div></div><span class="chev">›</span></a>`;
+        return `<a class="list-row card" href="#lesson/${t.id}/${i}"><div class="lesson-num ${d ? "done" : ""}">${d ? icon("check") : i + 1}</div><div class="grow"><div class="row-title">${esc(title)}</div><div class="small muted">${d ? `Quiz ${d.score}/${d.of || 3}` : s.lessons[lessonKey(t.id, i)] ? "Ready to read" : "~5 min"}</div></div><span class="chev">${icon("chevron")}</span></a>`;
       })
-      .join("")}</div>
-    ${t.practice === "roleplay" ? `<a class="btn primary" href="#roleplay">${icon("message")} Practice a networking conversation</a>` : t.practice === "mock" ? `<a class="btn primary" href="#mock">${icon("mic")} Start a voice mock interview</a>` : ""}`;
+      .join("")}</div>`;
 }
 
+// Unlimited practice quizzes: fresh AI questions each time, weighted toward lessons you've finished.
+let QZ = null;
+function renderQuiz(id) {
+  const t = TRACKS.find((x) => x.id === id);
+  if (!t) return (app.innerHTML = empty(`Track not found. <a href="#study">Back</a>`));
+  if (!QZ || QZ.track !== id) QZ = { track: id, qs: null };
+  app.innerHTML = `
+    <a class="back" href="#study/${t.id}">‹ ${t.name}</a>
+    <article class="card lesson">
+      <div class="eyebrow">Practice quiz · ${t.name}</div><h1>Test yourself</h1>
+      <div id="quiz-body">${AI.enabled() ? `<div class="skeleton"><span class="spinner"></span> Writing fresh questions…</div>` : `<p class="muted">Quizzes are written by Claude — add your API key in <a href="#settings">Settings</a>.</p>`}</div>
+    </article>`;
+  if (!AI.enabled()) return;
+  const draw = () => {
+    const body = document.getElementById("quiz-body");
+    if (!body) return;
+    body.innerHTML = `${QZ.qs
+      .map((q, qi) => `<div class="quiz-q"><p><strong>${qi + 1}. ${esc(q.q)}</strong></p>${q.options.map((o, oi) => `<button class="quiz-opt" data-qi="${qi}" data-oi="${oi}">${esc(o)}</button>`).join("")}<div class="small quiz-why"></div></div>`)
+      .join("")}<div class="row mt"><button class="btn primary" id="quiz-new">${icon("refresh")} New questions</button><a class="btn" href="#study/${t.id}">Back to track</a></div>`;
+    wireQuiz(QZ.qs, (score) => {
+      const s = study();
+      s.quizzes = [{ track: t.id, score, of: QZ.qs.length, at: Date.now() }, ...(s.quizzes || [])].slice(0, 100);
+      saveStudy(s);
+      toast(`Quiz done — ${score}/${QZ.qs.length}.`);
+    });
+    document.getElementById("quiz-new").onclick = () => {
+      QZ = null;
+      route();
+    };
+    Motion.reveal(body);
+  };
+  if (QZ.qs) return draw();
+  const done = t.lessons.filter((_, i) => study().done[lessonKey(t.id, i)]);
+  AI.quiz(t, done.length ? done : t.lessons)
+    .then((qs) => {
+      QZ.qs = qs;
+      if (location.hash === `#quiz/${t.id}`) draw();
+    })
+    .catch((e) => {
+      const body = document.getElementById("quiz-body");
+      if (!body) return;
+      body.innerHTML = `<p class="bad-text">${esc(e.message)}</p><button class="btn" id="quiz-retry">Try again</button>`;
+      document.getElementById("quiz-retry").onclick = () => {
+        QZ = null;
+        route();
+      };
+    });
+}
+
+// Shared quiz behavior for lessons and practice quizzes.
+function wireQuiz(quiz, onDone) {
+  const answers = {};
+  document.querySelectorAll(".quiz-opt").forEach((b) =>
+    b.addEventListener("click", () => {
+      const qi = +b.dataset.qi;
+      if (qi in answers) return;
+      const oi = +b.dataset.oi;
+      const q = quiz[qi];
+      answers[qi] = oi === q.answer;
+      const box = b.closest(".quiz-q");
+      box.querySelectorAll(".quiz-opt").forEach((x) => {
+        x.disabled = true;
+        if (+x.dataset.oi === q.answer) x.classList.add("right");
+      });
+      if (oi !== q.answer) b.classList.add("wrong");
+      box.querySelector(".quiz-why").textContent = (oi === q.answer ? "Correct. " : "Not quite. ") + (q.why || "");
+      if (Object.keys(answers).length === quiz.length) onDone(Object.values(answers).filter(Boolean).length);
+    })
+  );
+}
 function renderLesson(arg) {
   const [tid, idxStr] = arg.split("/");
   const t = TRACKS.find((x) => x.id === tid);
@@ -151,7 +300,7 @@ function renderLesson(arg) {
     })
     .catch((e) => {
       const body = document.getElementById("lesson-body");
-      if (body) body.innerHTML = `<p class="bad-text">${esc(e.message)}</p><button class="btn" onclick="route()">Try again</button>`;
+      if (body) body.innerHTML = `<p class="bad-text">${esc(e.message)}</p><button class="btn" onclick="location.reload()">Try again</button>`;
     });
 }
 
@@ -171,34 +320,16 @@ function lessonHTML(L, key) {
       )
       .join("")}</div>
     ${L.practice ? `<div class="callout practice"><strong>Practice this week</strong><p>${esc(L.practice)}</p></div>` : ""}
-    ${done ? `<p class="good-text small">✓ Completed — quiz ${done.score}/3</p>` : ""}`;
+    ${done ? `<p class="good-text small">${icon("check")} Completed — quiz ${done.score}/${done.of || 3}</p>` : ""}`;
 }
 
 function wireLesson(L, key) {
-  const answers = {};
-  document.querySelectorAll(".quiz-opt").forEach((b) =>
-    b.addEventListener("click", () => {
-      const qi = +b.dataset.qi;
-      if (qi in answers) return;
-      const oi = +b.dataset.oi;
-      const q = L.quiz[qi];
-      answers[qi] = oi === q.answer;
-      const box = b.closest(".quiz-q");
-      box.querySelectorAll(".quiz-opt").forEach((x) => {
-        x.disabled = true;
-        if (+x.dataset.oi === q.answer) x.classList.add("right");
-      });
-      if (oi !== q.answer) b.classList.add("wrong");
-      box.querySelector(".quiz-why").textContent = (oi === q.answer ? "✓ Correct. " : "✗ Not quite. ") + (q.why || "");
-      if (Object.keys(answers).length === L.quiz.length) {
-        const score = Object.values(answers).filter(Boolean).length;
-        const s = study();
-        s.done[key] = { score, at: Date.now() };
-        saveStudy(s);
-        toast(`Lesson complete — ${score}/${L.quiz.length} on the quiz.`);
-      }
-    })
-  );
+  wireQuiz(L.quiz, (score) => {
+    const s = study();
+    s.done[key] = { score, of: L.quiz.length, at: Date.now() };
+    saveStudy(s);
+    toast(`Lesson complete — ${score}/${L.quiz.length} on the quiz.`);
+  });
 }
 
 // ---------- networking role-play ----------
