@@ -10,6 +10,13 @@ An internship, college, and resume app built only from verified facts.
 
 Sources for acceptance rates and program data are listed at the top of `js/internships.js` and `js/colleges.js`.
 
+- **Study**: AI lessons and quizzes for Networking, Python, Technical Analysis, and Interviewing. Includes networking role-play with a tip after every message, and voice mock interviews that are timed, transcribed, and scored.
+- **Tracker**: application status for each program, exact deadlines, and calendar reminders.
+- **Application writing and outreach**: essays, cover letters, and networking emails drafted only from verified data. Every number is fact-checked, and missing details become [bracketed] notes for you to fill in.
+- **College profile**: courses, test scores, activities, leadership, and awards, which feed into your college chances.
+- **New-program finder**: an AI web search for new programs that matches your goal.
+- **Safety**: an automatic restore point every time the app updates, a full backup file (including your API key and phone number), and one-click restore.
+
 ## Run it
 
 Double-click `index.html`. No install needed.

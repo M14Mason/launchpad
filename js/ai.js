@@ -253,3 +253,76 @@ Rules:
     return text.trim();
   },
 });
+
+Object.assign(AI, {
+  // A short, accurate lesson with a quiz. General teaching content (not claims about Mason); examples may use his real projects.
+  async lesson(track, title) {
+    const text = await this.ask(
+      `Teach Mason one lesson. Track: ${track.name}. Lesson: "${title}".
+He's a 10th grader who built a Python trading bot (Alpaca API, EMA/RSI/ATR strategies, Flask dashboard), a study app, and a fitness app. Use his real projects as examples where they genuinely fit — never claim things about him that aren't in his data.
+Be accurate and practical; ~5 minutes of reading; plain language; ${track.id === "python" ? "include short, correct Python code examples in ``` fences" : "no fluff"}.${track.id === "ta" ? " This is education, not financial advice — say so once, briefly." : ""}
+Return ONLY JSON:
+{"intro": str, "sections": [{"heading": str, "body": str}] (3-4), "example": str, "keyPoints": [str] (3-5),
+ "quiz": [{"q": str, "options": [4 strings], "answer": 0-3, "why": str}] (3 questions), "practice": "one concrete thing to do this week"}`,
+      { effort: "medium", maxTokens: 8000 }
+    );
+    const j = this.parseJSON(text, null);
+    if (!j || !Array.isArray(j.sections) || !Array.isArray(j.quiz)) throw new Error("The lesson came back in an unexpected format — try again.");
+    return j;
+  },
+
+  // Networking role-play: Claude plays a realistic person; each turn also returns one coaching tip on Mason's last message.
+  async roleplayTurn(persona, thread) {
+    const text = await this.ask(
+      `ROLE-PLAY for networking practice. You play: ${persona.who}. Setting: ${persona.setting}
+Stay in character: realistic, friendly but busy; short replies (1-3 sentences); react naturally to what Mason says (if he's vague, be a little vague back; if he's specific and curious, open up).
+Transcript so far:
+${thread.map((m) => `${m.from === "me" ? "Mason" : "You"}: ${m.text}`).join("\n")}
+
+Return ONLY JSON: {"reply": "your in-character reply", "tip": "one short coaching tip on Mason's LAST message (what worked or what to try), max 20 words"}`,
+      { effort: "low" }
+    );
+    const j = this.parseJSON(text, null);
+    if (!j || typeof j.reply !== "string") throw new Error("The practice partner's reply came back in an unexpected format.");
+    return j;
+  },
+  async roleplayFeedback(persona, thread) {
+    const text = await this.ask(
+      `Grade Mason's networking conversation. He was talking to: ${persona.who} (${persona.setting}).
+${thread.map((m) => `${m.from === "me" ? "Mason" : "Them"}: ${m.text}`).join("\n")}
+Return ONLY JSON: {"score": 1-10, "verdict": str, "strengths": [2-3 str], "fixes": [2-3 str], "betterLine": "a stronger version of one thing he said, using only his facts"}`,
+      { effort: "medium" }
+    );
+    const j = this.parseJSON(text, null);
+    if (!j || typeof j.score !== "number") throw new Error("Feedback came back in an unexpected format.");
+    return j;
+  },
+
+  // Short, honest outreach email; Mason reviews and sends it himself.
+  async draftOutreach(role, recipient, name, context, purpose) {
+    const text = await this.ask(
+      `Write a short networking email from Mason (high school sophomore) to ${name || "the recipient"} — ${recipient} — about ${role.org} (${role.title}).
+Purpose: ${purpose}. ${context ? `How he found them / context: ${context}.` : ""}
+Rules: 90-140 words; specific and humble; mention at most ONE relevant true fact from his data; one clear, small ask; easy to say yes to; no flattery or clichés; never invent anything (use [brackets] for details he must fill in, like the recipient's name if not given).
+Return ONLY JSON: {"subject": str, "body": str}`,
+      { effort: "low" }
+    );
+    const j = this.parseJSON(text, null);
+    if (!j || typeof j.body !== "string") throw new Error("The email came back in an unexpected format — try again.");
+    return j;
+  },
+
+  // Web search for programs not already in the catalog.
+  async findNewPrograms(goalLabel, existing) {
+    const text = await this.ask(
+      `Search the web for REAL internships, research programs, competitions and pre-college programs for high school students focused on: ${goalLabel}.
+Mason: 10th grade now (rising junior in summer 2027), turns 16 in Dec 2026, lives in San Diego County, CA. Prefer programs he can apply to this cycle: San Diego, remote, or national.
+Skip anything already in his list: ${existing.slice(0, 160).join("; ")}.
+Only include programs you found with an official page. Return ONLY a JSON array (max 8) of:
+{"org": str, "title": str, "kind": "internship"|"research"|"program"|"competition", "field": "finance"|"business"|"tech"|"research", "location": str, "mode": "remote"|"in-person"|"hybrid", "pay": str, "deadline": str, "url": "official page", "about": "1-2 sentences", "status": "eligible"|"soon"|"ineligible", "reason": str, "selectivity": "open"|"easy"|"moderate"|"selective"|"competitive"|"elite", "acceptance": "published rate with source, or empty"}`,
+      { effort: "medium", maxTokens: 16000, webSearch: true }
+    );
+    const arr = this.parseJSON(text, []);
+    return Array.isArray(arr) ? arr.filter((x) => x && x.org && x.title && /^https?:\/\//.test(x.url || "")) : [];
+  },
+});

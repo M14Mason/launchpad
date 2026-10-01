@@ -83,32 +83,59 @@ function internshipChance(role, bank = getBank()) {
   };
 }
 
+// Mason's own entries from the college profile builder (courses, tests, activities, extra awards).
+function collegeProfile() {
+  return Object.assign({ courses: [], tests: { sat: "", act: "", psat: "" }, activities: [], awards: [] }, Store.get("collegeProfile", {}));
+}
+
 function collegeChance(col, bank = getBank()) {
   const skills = allSkills(bank).map((s) => cachedSkillScore(s, bank).total);
   const skillAvg = skills.reduce((a, b) => a + b, 0) / skills.length;
   const provenBullets = bank.bullets.length;
+  const p = collegeProfile();
+
+  // Rigor: Math 1 Honors (data block) + AP/honors/IB/dual-enrollment courses Mason has logged as done or in progress.
+  const rigorCourses = 1 + p.courses.filter((c) => c.status !== "planned").length;
+  const planned = p.courses.filter((c) => c.status === "planned").length;
+  const rigorEffect = Math.min(0.25, 0.04 + rigorCourses * 0.035);
+
+  const sat = +p.tests.sat || 0;
+  const act = +p.tests.act || 0;
+  const testEffect = col.uc ? 0 : Math.max(sat >= 1520 ? 0.25 : sat >= 1450 ? 0.18 : sat >= 1350 ? 0.1 : sat >= 1200 ? 0.03 : 0, act >= 35 ? 0.25 : act >= 33 ? 0.18 : act >= 30 ? 0.1 : 0);
+  const testValue = sat || act ? [sat && `SAT ${sat}`, act && `ACT ${act}`].filter(Boolean).join(" · ") : p.tests.psat ? `PSAT ${p.tests.psat} (not sent to colleges)` : "None logged yet";
+
+  const leaders = p.activities.filter((a) => a.leader);
+  const hours = p.activities.reduce((n, a) => n + (+a.hrsWeek || 0) * (+a.weeksYear || 0), 0);
+  const leadEffect = (leaders.length ? 0.12 : 0) + (leaders.length > 1 ? 0.05 : 0);
+  const hoursEffect = hours >= 300 ? 0.08 : hours >= 150 ? 0.05 : hours > 0 ? 0.02 : 0;
+
+  const LEVEL = { national: [0.2, "National"], state: [0.12, "State"], regional: [0.06, "Regional"], school: [0.02, "School"] };
+  const topAward = p.awards.reduce((best, a) => (LEVEL[a.level]?.[0] || 0) > (LEVEL[best?.level]?.[0] || 0) ? a : best, null);
+  const awardEffect = Math.max(0.05, topAward ? LEVEL[topAward.level][0] : 0);
+
   const factors = [
     { label: "GPA", value: "4.0", effect: 0.35, good: true, note: "Maxed — keep it through junior year, when grades count most." },
-    { label: "Course rigor", value: "1 honors class so far", effect: 0.05, good: false, note: "Selective schools expect the hardest courses available (AP/honors) in 11th–12th." },
+    { label: "Course rigor", value: `${rigorCourses} honors/AP class${rigorCourses === 1 ? "" : "es"}${planned ? ` (+${planned} planned)` : ""}`, effect: rigorEffect, good: rigorCourses >= 4, note: rigorCourses >= 4 ? "A rigorous schedule — keep it up." : "Selective schools expect the hardest courses available (AP/honors) in 11th–12th. Log them in your college profile." },
     { label: "Standout projects", value: "Trading bot · Keen (30,000 questions) · Titan", effect: 0.25, good: true, note: "Self-built software with real scale is a genuine 'spike'." },
-    { label: "Awards", value: "County / regional", effect: 0.05, good: false, note: "Two photography awards; no state or national-level recognition yet." },
+    { label: "Awards", value: topAward ? `${LEVEL[topAward.level][1]}: ${topAward.name}` : "County / regional", effect: awardEffect, good: awardEffect >= 0.12, note: topAward && awardEffect >= 0.12 ? "State/national recognition stands out." : "Two county-level photography awards; state or national recognition would help most." },
     { label: "Proven skills (Skill Bank)", value: `${Math.round(skillAvg)}/100`, effect: (skillAvg / 100) * 0.15 + Math.min(0.1, provenBullets * 0.02), good: skillAvg >= 55, note: "How well your skills are backed by real, specific evidence." },
-    { label: "Test scores", value: "Not in your data", effect: 0, good: null, note: col.uc ? "UCs are test-blind, so this doesn't matter here." : "Many schools weigh SAT/ACT again — a strong score helps." },
-    { label: "Leadership / impact", value: "Not in your data", effect: 0, good: false, note: "No leadership role, club, or community impact recorded yet." },
+    { label: "Test scores", value: testValue, effect: testEffect, good: col.uc ? null : testEffect >= 0.18 ? true : sat || act ? false : null, note: col.uc ? "UCs are test-blind, so this doesn't matter here." : sat || act ? (testEffect >= 0.18 ? "Strong score for this school." : "A higher score would help at test-optional schools.") : "Many schools weigh SAT/ACT again — log your score in your college profile once you have one." },
+    { label: "Leadership", value: leaders.length ? leaders.map((a) => `${a.role || "Leader"}, ${a.name}`).join(" · ") : "None logged yet", effect: leadEffect, good: leaders.length > 0, note: leaders.length ? "Leadership with real responsibility is a big plus." : "No leadership role recorded yet — starting or leading a club fits your story." },
+    { label: "Activity commitment", value: hours ? `${Math.round(hours)} hrs/year across ${p.activities.length} activit${p.activities.length === 1 ? "y" : "ies"}` : "None logged yet", effect: hoursEffect, good: hours >= 150, note: "Sustained, multi-year involvement matters more than a long list." },
   ];
   let m = 1 + factors.reduce((n, f) => n + f.effect, 0);
   const elite = col.rate < 10;
-  if (elite) m = Math.min(m, 1.7); // holistic admissions: even great stats move the needle less
-  const mPot = elite ? 2.3 : 2.8;
+  if (elite) m = Math.min(m, 1.85); // holistic admissions: even great stats move the needle less
+  const mPot = Math.max(elite ? 2.3 : 2.8, m + 0.25); // potential is never below today
 
   const improve = [
-    "Take the most rigorous courses you can in 11th–12th (AP/honors math, CS, economics).",
+    rigorCourses < 4 && "Take the most rigorous courses you can in 11th–12th (AP/honors math, CS, economics) and log them in your college profile.",
     "Turn a project into measurable impact: real users for Keen, a documented track record for the bot.",
-    "Earn state or national recognition — e.g. the Wharton Investment Competition or a national economics challenge.",
-    "Take on a leadership role (start or lead a club — an investing or coding club fits your story).",
-    col.uc ? "Plan your UC Personal Insight Questions around your projects — UCs are test-blind." : "Prepare for the SAT/ACT; a high score helps at test-optional schools.",
+    awardEffect < 0.12 && "Earn state or national recognition — e.g. the Wharton Investment Competition or a national economics challenge.",
+    !leaders.length && "Take on a leadership role (start or lead a club — an investing or coding club fits your story).",
+    col.uc ? "Plan your UC Personal Insight Questions around your projects — UCs are test-blind." : testEffect < 0.18 && "Prepare for the SAT/ACT; a high score helps at test-optional schools.",
     "Keep building your Skill Bank so essays and interviews have specific, true stories.",
-  ];
+  ].filter(Boolean);
   return {
     base: col.rate,
     chance: pct(adjust(col.rate, m)),
@@ -137,7 +164,7 @@ const _memo = { key: null, skill: {}, role: {}, college: {} };
 function memoFresh() {
   let k = "";
   try {
-    k = localStorage.getItem("rb.bank") || "";
+    k = (localStorage.getItem("rb.bank") || "") + "|" + (localStorage.getItem("rb.collegeProfile") || "");
   } catch {}
   if (k !== _memo.key) Object.assign(_memo, { key: k, skill: {}, role: {}, college: {} });
 }

@@ -72,21 +72,56 @@ function empty(msg) {
 }
 
 // ---------- router ----------
-const NAV_FOR = { dashboard: "dashboard", tracker: "tracker", internships: "internships", internship: "internships", generate: "internships", colleges: "colleges", college: "colleges", skills: "skills", coach: "skills", resumes: "resumes", resume: "resumes", settings: "settings" };
+const NAV_FOR = { dashboard: "dashboard", tracker: "tracker", internships: "internships", internship: "internships", generate: "internships", colleges: "colleges", college: "colleges", skills: "skills", coach: "skills", resumes: "resumes", resume: "resumes", settings: "settings", study: "study", lesson: "study", roleplay: "study", mock: "study", profile: "colleges" };
 function route() {
   const [view = "dashboard", ...rest] = location.hash.slice(1).split("/");
   const id = decodeURIComponent(rest.join("/"));
   document.querySelectorAll("#nav a").forEach((a) => a.classList.toggle("active", a.dataset.nav === (NAV_FOR[view] || "dashboard")));
-  const views = { dashboard: renderDashboard, internships: renderInternships, internship: renderInternship, generate: renderGenerate, colleges: renderColleges, college: renderCollege, skills: renderSkills, coach: renderCoach, resumes: renderResumes, resume: renderResumeView, settings: renderSettings, pair: renderPair, tracker: renderTracker };
+  document.getElementById("nav-more")?.classList.toggle("active", !!document.querySelector("#nav a.more-item.active"));
+  const views = { dashboard: renderDashboard, internships: renderInternships, internship: renderInternship, generate: renderGenerate, colleges: renderColleges, college: renderCollege, skills: renderSkills, coach: renderCoach, resumes: renderResumes, resume: renderResumeView, settings: renderSettings, pair: renderPair, tracker: renderTracker, study: (id) => (id ? renderTrack(id) : renderStudy()), lesson: renderLesson, roleplay: renderRoleplay, mock: renderMock, profile: renderCollegeProfile };
+  // Leaving a page stops any live mic or spoken question.
+  if (dictate.rec) dictate.rec.stop();
+  try {
+    window.speechSynthesis?.cancel();
+  } catch {}
   (views[view] || renderDashboard)(id);
+  const animate = !route.keepScroll && !route.quiet;
   if (!route.keepScroll) window.scrollTo(0, 0);
-  route.keepScroll = false;
+  route.keepScroll = route.quiet = false;
+  closeMoreMenu();
+  if (animate) {
+    Motion.page();
+    if ((views[view] ? view : "dashboard") === "dashboard") Motion.hero(app.querySelector(".hero"));
+  }
 }
 window.addEventListener("hashchange", route);
 function go(hash) {
   if (location.hash === "#" + hash) route();
   else location.hash = hash;
 }
+
+// Phones: the bottom bar shows the main tabs; "More" opens the rest.
+function closeMoreMenu() {
+  const m = document.getElementById("more-menu");
+  if (!m || m.hidden) return;
+  m.hidden = true;
+  document.getElementById("nav-more")?.setAttribute("aria-expanded", "false");
+}
+document.getElementById("nav-more")?.addEventListener("click", (e) => {
+  e.stopPropagation();
+  const m = document.getElementById("more-menu");
+  if (!m.hidden) return closeMoreMenu();
+  m.innerHTML = [...document.querySelectorAll("#nav a.more-item")]
+    .map((a) => `<a href="${a.getAttribute("href")}" class="${a.classList.contains("active") ? "active" : ""}">${a.querySelector("svg").outerHTML}<span>${a.querySelector(".lbl").textContent}</span></a>`)
+    .join("");
+  m.hidden = false;
+  e.currentTarget.setAttribute("aria-expanded", "true");
+  if (window.gsap && !Motion.reduced) {
+    gsap.fromTo(m, { y: 12, autoAlpha: 0 }, { y: 0, autoAlpha: 1, duration: 0.25, ease: "power2.out", clearProps: "transform,opacity,visibility" });
+    Motion.ensureVisible([m], 600);
+  }
+});
+document.addEventListener("click", (e) => !e.target.closest("#more-menu") && closeMoreMenu());
 
 // ================= DASHBOARD =================
 function readiness() {
@@ -266,7 +301,7 @@ function renderInternships() {
   app.innerHTML = `
     <div class="page-head">
       <div><h1>Internships & programs</h1><p class="muted">${all.length} real programs · every chance is an estimate built on a real rate and your profile.</p></div>
-      <button class="btn" id="add-company">+ Add a company</button>
+      <div class="row"><button class="btn primary" id="find-new">✨ Find new programs</button><button class="btn" id="add-company">+ Add a company</button></div>
     </div>
     <div class="card filterbar">
       <input type="search" id="search" placeholder="Search programs, companies, cities…" value="${esc(f.q)}">
@@ -302,9 +337,11 @@ function renderInternships() {
     }, 200);
   });
   document.getElementById("add-company").addEventListener("click", openOtherCompany);
+  document.getElementById("find-new").addEventListener("click", openProgramFinder);
 }
 function rerenderKeepScroll() {
   const y = window.scrollY;
+  route.quiet = true;
   route();
   window.scrollTo(0, y);
 }
@@ -360,6 +397,7 @@ function renderInternship(id) {
         </section>
 
         ${s !== "ineligible" ? writingPanelHTML(r) : ""}
+        ${s !== "ineligible" ? outreachPanelHTML(r) : ""}
       </div>
 
       <aside class="chance-card card">
@@ -396,6 +434,7 @@ function renderInternship(id) {
   };
   wireTrackerPanel(r, rerender);
   wireWritingPanel(r, rerender);
+  wireOutreachPanel(r, rerender);
 }
 
 function researchHTML(x) {
@@ -534,7 +573,8 @@ function renderGenResult(gen) {
           <button class="btn" data-act="copy">Copy text</button>
           <button class="btn" data-act="txt">Download .txt</button>
         </div>
-        <div class="paper" id="resume-paper">${resumeToHTML(resume)}</div>
+        ${templatePicker()}
+        <div class="paper ${tplClass()}" id="resume-paper">${resumeToHTML(resume)}</div>
       </div>
       <div class="stack">
         ${
@@ -582,7 +622,7 @@ function wireResumeActions(root, resume, name, score, role) {
     URL.revokeObjectURL(a.href);
   });
   root.querySelector('[data-act="print"]').addEventListener("click", () => {
-    document.getElementById("print-root").innerHTML = `<div class="paper">${resumeToHTML(resume)}</div>`;
+    document.getElementById("print-root").innerHTML = `<div class="paper ${tplClass()}">${resumeToHTML(resume)}</div>`;
     const t = document.title;
     document.title = `Mason Ngo Resume - ${name}`;
     window.print();
@@ -595,6 +635,28 @@ function wireResumeActions(root, resume, name, score, role) {
     toast("Saved to Resumes.");
   });
 }
+
+// ---------- resume formats (layout only — the text is identical and stays ATS-safe) ----------
+const TEMPLATES = [
+  ["classic", "Classic"],
+  ["modern", "Modern"],
+  ["minimal", "Minimal"],
+];
+function tplClass() {
+  const t = getSettings().resumeTemplate;
+  return "tpl-" + (TEMPLATES.some(([k]) => k === t) ? t : "classic");
+}
+function templatePicker() {
+  const cur = tplClass().slice(4);
+  return `<div class="segmented" role="group" aria-label="Resume format">${TEMPLATES.map(([k, l]) => `<button data-tpl="${k}" class="${cur === k ? "on" : ""}">${l}</button>`).join("")}</div>`;
+}
+document.addEventListener("click", (e) => {
+  const b = e.target.closest("[data-tpl]");
+  if (!b) return;
+  Store.set("settings", { ...getSettings(), resumeTemplate: b.dataset.tpl });
+  document.querySelectorAll(".paper").forEach((p) => (p.className = p.className.replace(/tpl-\w+/, tplClass())));
+  document.querySelectorAll("[data-tpl]").forEach((x) => x.classList.toggle("on", x.dataset.tpl === b.dataset.tpl));
+});
 
 function rubricCard(score) {
   return `<div class="card"><h3>Scoring rubric</h3>
@@ -734,6 +796,11 @@ function renderColleges() {
 
   app.innerHTML = `
     <div class="page-head"><div><h1>Colleges</h1><p class="muted">Real admit rates (Class of 2029 / Fall 2025), adjusted for your profile today — and what's possible by senior year.</p></div></div>
+    ${(() => {
+      const p = collegeProfile();
+      const n = p.courses.length + p.activities.length + p.awards.length + (p.tests.sat || p.tests.act ? 1 : 0);
+      return `<a class="card practice-cta" href="#profile"><div class="track-icon">🎓</div><div><h3>Your college profile</h3><p class="small muted">${n ? `${p.courses.length} courses · ${p.activities.length} activities · ${p.awards.length} extra awards${p.tests.sat || p.tests.act ? " · test score logged" : ""}` : "Add AP classes, activities, leadership and test scores so these chances use real numbers."}</p></div><span class="chev">›</span></a>`;
+    })()}
     <div class="card filterbar">
       <div class="filter-selects">
         <select id="col-set"><option value="all">All colleges</option><option value="ca" ${f.set === "ca" ? "selected" : ""}>California</option><option value="uc" ${f.set === "uc" ? "selected" : ""}>UC campuses</option></select>
@@ -1087,7 +1154,8 @@ function renderResumeView(id) {
     <div class="page-head"><div><h1>${esc(name)} resume</h1></div>${id !== "master" ? `<button class="btn ghost" id="del">Delete</button>` : ""}</div>
     <div class="result">
       <div class="stack"><div class="row"><button class="btn primary" data-act="print">Save as PDF</button><button class="btn" data-act="copy">Copy text</button><button class="btn" data-act="txt">Download .txt</button></div>
-        <div class="paper">${resumeToHTML(resume)}</div></div>
+        ${templatePicker()}
+        <div class="paper ${tplClass()}">${resumeToHTML(resume)}</div></div>
       <div class="stack">${rubricCard(score)}</div>
     </div>`;
   wireResumeActions(app, resume, name, score, role);
@@ -1118,10 +1186,7 @@ function renderSettings() {
         <div class="row"><button class="btn primary" id="save-ai">Save</button><button class="btn" id="test-ai">Test key</button></div>
         <p class="small muted">Only use this on your own device.</p></div>
       ${syncCardHTML()}
-      <div class="card"><h3>Backup</h3>
-        <p class="small muted">Skill Bank answers, coach chats and saved resumes live in this browser. Export to move them to another device.</p>
-        <div class="row"><button class="btn" id="export">Export backup</button><label class="btn">Import backup<input type="file" id="import" accept="application/json" hidden></label></div>
-        <hr><button class="btn danger" id="reset">Erase all saved data…</button></div>
+      ${backupCardHTML()}
     </div>`;
   const $ = (id) => document.getElementById(id);
   const save = (patch) => Store.set("settings", { ...getSettings(), ...patch });
@@ -1135,30 +1200,59 @@ function renderSettings() {
       toast("Key works ✓");
     });
   $("export").onclick = () => {
-    const data = Object.fromEntries(KEYS.map((k) => [k, Store.get(k, null)]));
-    data.phone = getSettings().phone;
-    const a = document.createElement("a");
-    a.href = URL.createObjectURL(new Blob([JSON.stringify(data, null, 2)], { type: "application/json" }));
-    a.download = "launchpad-backup.json";
-    a.click();
+    Backup.download();
+    toast("Full backup downloaded — keep it private (it contains your API key).");
+    renderSettings();
   };
   $("import").onchange = async (e) => {
     try {
-      const data = JSON.parse(await e.target.files[0].text());
-      KEYS.forEach((k) => data[k] != null && Store.set(k, data[k]));
-      if (data.phone) save({ phone: data.phone });
+      await Backup.restoreFile(e.target.files[0]);
       toast("Backup restored.");
-    } catch {
-      toast("That file isn't a valid backup.");
+      route();
+    } catch (err) {
+      toast(err.message);
     }
   };
+  app.querySelectorAll("[data-restore-snap]").forEach((b) =>
+    b.addEventListener("click", () => {
+      if (!confirm("Restore this restore point? Your current data is saved as a new restore point first, so you can undo this.")) return;
+      try {
+        Backup.restoreSnap(+b.dataset.restoreSnap);
+        toast("Restored.");
+        route();
+      } catch (err) {
+        toast(err.message);
+      }
+    })
+  );
   wireSyncCard();
   $("reset").onclick = () => {
-    if (!confirm("Erase all Skill Bank answers, coach chats, saved resumes, added companies and settings from this browser?")) return;
-    [...KEYS, "settings"].forEach((k) => localStorage.removeItem("rb." + k));
-    toast("Erased.");
+    if (!confirm("Erase all Skill Bank answers, coach chats, saved resumes, added companies and settings from this browser? (A restore point is saved first.)")) return;
+    Backup.snapshot("Automatic — before erasing data");
+    [...KEYS, "settings", "collegeProfile", "study", "updatedAt"].forEach((k) => localStorage.removeItem("rb." + k));
+    toast("Erased. You can bring it back from the restore points below.");
     renderSettings();
   };
+}
+
+function backupCardHTML() {
+  const snaps = Backup.snaps();
+  const last = Backup.lastDownload();
+  const syncOn = Sync.enabled();
+  return `<div class="card"><h3>Backup &amp; restore</h3>
+    <div class="backup-status">
+      <div class="${syncOn ? "ok" : ""}"><strong>${syncOn ? "✓" : "○"} Cloud copy</strong><span class="small muted">${syncOn ? "Encrypted on your GitHub · " + (Sync.cfg().lastSync ? new Date(Sync.cfg().lastSync).toLocaleString() : "pending") : "Turn on sync above"}</span></div>
+      <div class="${snaps.length ? "ok" : ""}"><strong>${snaps.length ? "✓" : "○"} Restore points</strong><span class="small muted">${snaps.length ? `${snaps.length} saved in this browser (made automatically on every update)` : "Made automatically on the next update"}</span></div>
+      <div class="${last ? "ok" : ""}"><strong>${last ? "✓" : "○"} Backup file</strong><span class="small muted">${last ? "Last downloaded " + new Date(last).toLocaleDateString() : "Never — download one now"}</span></div>
+    </div>
+    <p class="small muted">A backup file has everything: Skill Bank, resumes, tracker, essays, study progress, your phone number <strong>and API key</strong> — store it somewhere private (not in the GitHub repo).</p>
+    <div class="row"><button class="btn primary" id="export">Download full backup</button><label class="btn">Restore from file<input type="file" id="import" accept="application/json" hidden></label></div>
+    ${
+      snaps.length
+        ? `<h4>Restore points</h4>${snaps.map((s, i) => `<div class="kv"><span>${new Date(s.at).toLocaleString()}<br><span class="small">${esc(s.reason)}</span></span><button class="btn small" data-restore-snap="${i}">Restore</button></div>`).join("")}`
+        : ""
+    }
+    <hr><button class="btn danger" id="reset">Erase all saved data…</button></div>`;
 }
 
 // ================= SYNC =================

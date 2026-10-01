@@ -224,7 +224,7 @@ function writingPanelHTML(r) {
     <label class="field mt-s"><span>Essay question (paste it from the application)</span><textarea id="w-prompt" placeholder="e.g. Describe a problem you solved and what you learned."></textarea></label>
     ${AI.enabled() ? `<button class="btn primary" id="w-go">✨ Draft it</button>` : `<p class="small muted">Add a Claude API key in <a href="#settings">Settings</a> to draft essays.</p>`}
     <div id="w-out"></div>
-    ${saved.length ? `<h4>Saved drafts</h4>${saved.map((e) => `<details class="draft"><summary>${e.kind === "cover" ? "Cover letter" : "Essay"} · ${esc(new Date(e.ts).toLocaleDateString())}${e.prompt ? " — " + esc(e.prompt.slice(0, 60)) : ""}</summary><div class="draft-text">${esc(e.text)}</div><div class="row"><button class="btn small" data-copy-essay="${e.id}">Copy</button><button class="btn ghost small" data-del-essay="${e.id}">Delete</button></div></details>`).join("")}` : ""}
+    ${saved.length ? `<h4>Saved drafts</h4>${saved.map((e) => `<details class="draft"><summary>${{ cover: "Cover letter", outreach: "Outreach email" }[e.kind] || "Essay"} · ${esc(new Date(e.ts).toLocaleDateString())}${e.prompt ? " — " + esc(e.prompt.slice(0, 60)) : ""}</summary><div class="draft-text">${esc(e.text)}</div><div class="row"><button class="btn small" data-copy-essay="${e.id}">Copy</button><button class="btn ghost small" data-del-essay="${e.id}">Delete</button></div></details>`).join("")}` : ""}
   </section>`;
 }
 
