@@ -49,28 +49,40 @@ const Eleven = {
       this.audio.play()?.then?.(() => (this._unlocked = true)).catch?.(() => {});
     } catch {}
   },
+  // Errors carry .kind: "key" (stop trying this session), "voice" (retry with a free premade voice), or "temp".
   async request(path, opts = {}) {
     let res;
+    const ctl = new AbortController();
+    const t = setTimeout(() => ctl.abort(), 20000);
     try {
-      res = await fetch("https://api.elevenlabs.io" + path, { ...opts, headers: { "xi-api-key": getSettings().elevenKey, "Content-Type": "application/json" } });
-    } catch {
-      throw new Error("Couldn't reach ElevenLabs — check your internet connection.");
+      res = await fetch("https://api.elevenlabs.io" + path, { ...opts, signal: ctl.signal, headers: { "xi-api-key": (getSettings().elevenKey || "").trim(), "Content-Type": "application/json" } });
+    } catch (e) {
+      throw Object.assign(new Error(e.name === "AbortError" ? "ElevenLabs took too long to answer." : "Couldn't reach ElevenLabs — check your internet connection."), { kind: "temp" });
+    } finally {
+      clearTimeout(t);
     }
     if (res.ok) return res;
-    let detail = "";
+    let code = "";
+    let msg = "";
     try {
       const j = await res.json();
-      detail = j.detail?.status || j.detail?.code || j.detail?.message || "";
+      code = String(j.detail?.status || j.detail?.code || "");
+      msg = String(j.detail?.message || (typeof j.detail === "string" ? j.detail : "") || "");
     } catch {}
-    if (res.status === 402 || /quota|credit/i.test(detail)) throw new Error("ElevenLabs: you're out of voice credits this month.");
-    if (res.status === 401) throw new Error(/permission|missing/i.test(detail) ? "ElevenLabs: this key is missing a permission (turn on Text to Speech and Voices → Read)." : "ElevenLabs rejected the key — check it in Settings.");
-    if (res.status === 429) throw new Error("ElevenLabs is busy right now.");
-    throw new Error(`ElevenLabs error ${res.status}${detail ? " (" + detail + ")" : ""}.`);
+    const all = (code + " " + msg).toLowerCase();
+    const err = (text, kind) => Object.assign(new Error(text), { kind, code: code || res.status, status: res.status });
+    if (/unusual_activity|unusual activity|abuse/.test(all)) throw err("ElevenLabs blocked free-plan use from this network (“unusual activity”). Turn off any VPN/proxy, or upgrade to a paid plan — until then the device voice is used.", "key");
+    if (/quota|credits|character_limit/.test(all)) throw err("ElevenLabs: you're out of voice credits this month.", "key");
+    if (/missing_permission|permission/.test(all)) throw err("ElevenLabs: this key is missing a permission. Edit the key at elevenlabs.io and allow Text to Speech (and Voices: Read).", "key");
+    if (/invalid_api_key|api key|unauthorized/.test(all) || (res.status === 401 && !code)) throw err("ElevenLabs rejected the key — copy it again from elevenlabs.io → Developers → API Keys.", "key");
+    if (/voice|paid_plan|payment_required|library/.test(all) || res.status === 402 || res.status === 404) throw err("That ElevenLabs voice needs a paid plan or wasn't found.", "voice");
+    if (res.status === 429) throw err("ElevenLabs is busy right now.", "temp");
+    throw err(`ElevenLabs error ${res.status}${code ? " (" + code + ")" : ""}${msg ? ": " + msg : ""}`, res.status === 401 ? "key" : "temp");
   },
   async voices(force) {
     if (this._voices && !force) return this._voices;
     const j = await (await this.request("/v1/voices")).json();
-    this._voices = (j.voices || []).map((v) => ({ id: v.voice_id, name: v.name, gender: v.labels?.gender || "", accent: v.labels?.accent || "", desc: v.labels?.description || v.labels?.descriptive || v.labels?.use_case || "" }));
+    this._voices = (j.voices || []).map((v) => ({ id: v.voice_id, name: v.name, category: v.category || "", gender: v.labels?.gender || "", accent: v.labels?.accent || "", desc: v.labels?.description || v.labels?.descriptive || v.labels?.use_case || "" }));
     return this._voices;
   },
   async usage() {
@@ -83,7 +95,8 @@ const Eleven = {
     if (want && want !== "auto") return want;
     const g = /^m/i.test(gender || "") ? "male" : "female";
     try {
-      const list = (await this.voices()).filter((v) => v.gender === g);
+      // Only ElevenLabs' built-in ("premade") voices work on the free plan through the API.
+      const list = (await this.voices()).filter((v) => v.gender === g && (!v.category || v.category === "premade"));
       const us = list.filter((v) => /americ/i.test(v.accent));
       const pool = (us.length ? us : list).map((v) => v.id);
       if (pool.length) return pool[Math.abs(hash(seed)) % pool.length];
@@ -112,7 +125,17 @@ const Eleven = {
     return url;
   },
   async play(text, { gender, seed, onStart, isCurrent }) {
-    const url = await this.audioFor(text, await this.voiceFor(gender, seed));
+    if (this.broken) throw Object.assign(new Error(this.broken), { kind: "key" });
+    let url;
+    try {
+      url = await this.audioFor(text, await this.voiceFor(gender, seed));
+    } catch (e) {
+      if (e.kind === "key") this.broken = e.message; // don't keep failing (and waiting) on every line
+      if (e.kind !== "voice") throw e;
+      // The chosen voice isn't available on this plan: fall back to a built-in voice.
+      const g = /^m/i.test(gender || "") ? "male" : "female";
+      url = await this.audioFor(text, ELEVEN_DEFAULTS[g][0]);
+    }
     if (!isCurrent()) return;
     if (!this.audio) this.unlock();
     const a = this.audio;
@@ -198,19 +221,25 @@ const Voice = {
     return list.find((v) => v.voiceURI === want) || list[0] || null;
   },
   // Call inside a tap: lets speech and audio start later without another tap (iOS/Safari).
+  // Desktop browsers don't need this; on iPhone a silent utterance is spoken once and left to finish
+  // (cancelling it right away can leave Safari's speech engine silent until reload).
   unlock() {
     Eleven.unlock();
     try {
-      if (this._unlocked || !this.supported) return;
-      const u = new SpeechSynthesisUtterance(" ");
+      if (this._unlocked || !this.supported || !IS_IOS) return;
+      const u = new SpeechSynthesisUtterance(".");
       u.volume = 0;
+      u.rate = 2;
       speechSynthesis.speak(u);
       this._unlocked = true;
+      this._unlockAt = Date.now();
     } catch {}
   },
   stop() {
     Eleven.stop();
-    if (this.supported) speechSynthesis.cancel();
+    // Only cancel speech we started — never the iPhone unlock utterance.
+    if (this.supported && this._talking && (speechSynthesis.speaking || speechSynthesis.pending)) speechSynthesis.cancel();
+    this._talking = false;
   },
   // ElevenLabs when a key is set, otherwise the best device voice. Resolves when finished or cancelled.
   async speak(text, { onStart, gender, seed } = {}) {
@@ -223,10 +252,15 @@ const Voice = {
         return await Eleven.play(String(text), { gender, seed, onStart, isCurrent });
       } catch (e) {
         if (!isCurrent()) return;
+        this.lastError = e.message;
         if (!this._warned) toast(e.message + " Using the device voice instead.");
         this._warned = true;
       }
     }
+    // Let the iPhone unlock utterance finish instead of cancelling it.
+    if (this._unlockAt && Date.now() - this._unlockAt < 600) await new Promise((r) => setTimeout(r, 600 - (Date.now() - this._unlockAt)));
+    if (!isCurrent()) return;
+    this._talking = true;
     if (!this.supported) return;
     const voice = await this.pick();
     // Sentence by sentence: sounds more natural and avoids Chrome's long-utterance cutoff.

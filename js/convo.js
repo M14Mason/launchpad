@@ -117,7 +117,8 @@ function micCheckHTML() {
     <div class="meter"><i id="mc-level"></i></div>
     <p class="small muted" id="mc-note">${IS_IOS ? "iPhone: uses the built-in mic (or AirPods). Allow microphone access when asked." : "Blue Snowball: set it as your default input (Windows: Settings → System → Sound → Input; Mac: System Settings → Sound → Input) and pick it here. Speech recognition uses your browser's selected mic."}</p>
     <div class="row"><button class="btn small" id="mc-stt">${icon("message")} Test speech-to-text</button><span class="small muted grow" id="mc-stt-out">Say a sentence — your words should appear here.</span></div>
-    <label class="field"><span>Voice ${Eleven.enabled() ? `<span class="pill">ElevenLabs</span>` : ""}</span><div class="row"><select id="mc-voice" style="flex:1"><option>Loading voices…</option></select><button class="btn small" id="mc-say">${icon("volume")} Test</button></div></label>
+    <label class="field"><span>Voice ${Eleven.enabled() ? `<span class="pill">ElevenLabs</span>` : ""}</span><div class="row"><select id="mc-voice" style="flex:1"><option>Loading voices…</option></select><button class="btn small" id="mc-say">${icon("volume")} Sound check</button></div></label>
+    <div class="sound-check" id="mc-sound" hidden></div>
     <label class="field"><span>Speaking speed</span><div class="segmented" id="mc-rate">${[0.9, 1, 1.1, 1.2].map((r) => `<button data-rate="${r}" class="${(getSettings().voiceRate || 1) === r ? "on" : ""}">${r === 1 ? "Normal" : r + "×"}</button>`).join("")}</div></label>
     <p class="small muted">${
       Eleven.enabled()
@@ -150,10 +151,7 @@ function wireMicCheck() {
       });
   else deviceVoices();
   sel.addEventListener("change", () => Store.set("settings", { ...getSettings(), [sel.dataset.kind === "eleven" ? "elevenVoice" : "voiceURI"]: sel.value }));
-  document.getElementById("mc-say").addEventListener("click", () => {
-    Voice.unlock();
-    Voice.speak("Hi Mason, thanks for coming in today. So, tell me a little about yourself — what got you into finance?", { gender: "female", seed: "test" });
-  });
+  document.getElementById("mc-say").addEventListener("click", (e) => soundCheck(e.currentTarget));
   document.querySelectorAll("#mc-rate [data-rate]").forEach((b) =>
     b.addEventListener("click", () => {
       Store.set("settings", { ...getSettings(), voiceRate: +b.dataset.rate });
@@ -208,6 +206,76 @@ function wireMicCheck() {
       document.getElementById("mc-note").textContent = "Say something — the bar should move. (Checking for 8 seconds.)";
     })
   );
+}
+
+// Step-by-step sound check that shows exactly what works and what fails, on any device.
+async function soundCheck(btn) {
+  const out = document.getElementById("mc-sound");
+  Voice.unlock();
+  Voice.cancel();
+  out.hidden = false;
+  const steps = [];
+  const draw = () =>
+    (out.innerHTML = steps.map((s) => `<div class="sc-step ${s.ok === true ? "ok" : s.ok === false ? "bad" : ""}">${s.ok === true ? icon("check") : s.ok === false ? icon("x") : `<span class="spinner"></span>`}<div><strong>${esc(s.name)}</strong>${s.note ? `<div class="small">${esc(s.note)}</div>` : ""}</div></div>`).join(""));
+  const step = (name) => {
+    const s = { name, ok: null, note: "" };
+    steps.push(s);
+    draw();
+    return s;
+  };
+  btn.disabled = true;
+  try {
+    if (Eleven.enabled()) {
+      const s = step("ElevenLabs voice");
+      Eleven.broken = null;
+      try {
+        const t0 = Date.now();
+        await Eleven.play("Hi Mason! This is your ElevenLabs voice.", { gender: "female", seed: "test", isCurrent: () => true });
+        s.ok = true;
+        s.note = `Played (${((Date.now() - t0) / 1000).toFixed(1)}s). Didn't hear it? Check the volume and output device.`;
+      } catch (e) {
+        s.ok = false;
+        s.note = e.message + " The app will use the device voice instead.";
+      }
+      draw();
+    }
+    const d = step("Device voice");
+    if (!Voice.supported) {
+      d.ok = false;
+      d.note = "This browser has no built-in speech.";
+    } else {
+      const voice = await Voice.pick();
+      const res = await new Promise((resolve) => {
+        const u = new SpeechSynthesisUtterance("This is the device voice. If you can hear me, sound works.");
+        if (voice) {
+          u.voice = voice;
+          u.lang = voice.lang;
+        }
+        let started = false;
+        u.onstart = () => (started = true);
+        u.onend = () => resolve({ ok: true });
+        u.onerror = (ev) => resolve({ ok: false, err: ev.error });
+        try {
+          speechSynthesis.resume();
+        } catch {}
+        speechSynthesis.speak(u);
+        setTimeout(() => resolve(started || speechSynthesis.speaking ? { ok: true, slow: true } : { ok: false, err: "never-started" }), 9000);
+      });
+      d.ok = res.ok;
+      d.note = res.ok
+        ? `Played with “${voice?.name || "default voice"}”.${IS_IOS ? " Heard nothing? Flip the iPhone's ring/silent switch off — silent mode mutes web speech." : " Heard nothing? Check volume and which speaker/headphones are selected."}`
+        : res.err === "not-allowed"
+          ? "The browser blocked speech — tap the button again (it must start from a tap)."
+          : res.err === "never-started"
+            ? IS_IOS
+              ? "Speech never started. Turn off silent mode, close other apps using audio, then reload the page."
+              : "Speech never started. Reload the page; on Windows check Settings → Time & language → Speech has a voice installed."
+            : "Speech error: " + res.err;
+    }
+    draw();
+  } finally {
+    btn.disabled = false;
+  }
 }
 
 // ---------- session ----------

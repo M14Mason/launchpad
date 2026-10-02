@@ -1340,6 +1340,8 @@ function renderSettings() {
   $("save-el").onclick = () => {
     save({ elevenKey: $("elkey").value.trim(), elevenModel: $("elmodel").value });
     Eleven._voices = null;
+    Eleven.broken = null;
+    Voice._warned = false;
     toast("Saved.");
     renderSettings();
   };
@@ -1348,6 +1350,8 @@ function renderSettings() {
       save({ elevenKey: $("elkey").value.trim(), elevenModel: $("elmodel").value });
       Voice.unlock();
       Voice._warned = false;
+      Eleven.broken = null;
+      Eleven._voices = null;
       await Eleven.play("Hi Mason! This is how your interviewer will sound. Pretty human, right?", { gender: "female", seed: "test", isCurrent: () => true });
       showUsage();
     });

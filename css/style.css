@@ -740,3 +740,9 @@ label.check input { margin-top: 3px; }
   .tracks .track .track-icon { width: 34px; height: 34px; }
   .tracks .track .ring { --size: 38px !important; }
 }
+.sound-check { display: grid; gap: 8px; margin: 4px 0 10px; }
+.sc-step { display: flex; gap: 10px; align-items: flex-start; padding: 10px 12px; border-radius: var(--r-sm); background: var(--surface-2); font-size: 13.5px; }
+.sc-step .i { width: 16px; height: 16px; flex: none; margin-top: 2px; }
+.sc-step.ok .i { color: var(--good); }
+.sc-step.bad { background: var(--bad-soft); }
+.sc-step.bad .i { color: var(--bad); }
