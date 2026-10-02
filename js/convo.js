@@ -119,6 +119,7 @@ function micCheckHTML() {
     <div class="row"><button class="btn small" id="mc-stt">${icon("message")} Test speech-to-text</button><span class="small muted grow" id="mc-stt-out">Say a sentence — your words should appear here.</span></div>
     <label class="field"><span>Voice ${Eleven.enabled() ? `<span class="pill">ElevenLabs</span>` : ""}</span><div class="row"><select id="mc-voice" style="flex:1"><option>Loading voices…</option></select><button class="btn small" id="mc-say">${icon("volume")} Sound check</button></div></label>
     <div class="sound-check" id="mc-sound" hidden></div>
+    <label class="field"><span>Send my answer</span><div class="segmented" id="mc-send">${[["2", "After 2s pause"], ["3", "After 3s"], ["5", "After 5s"], ["tap", "When I tap"]].map(([v, l]) => `<button data-send="${v}" class="${String(getSettings().sendAfter || "3") === v ? "on" : ""}">${l}</button>`).join("")}</div></label>
     <label class="field"><span>Speaking speed</span><div class="segmented" id="mc-rate">${[0.9, 1, 1.1, 1.2].map((r) => `<button data-rate="${r}" class="${(getSettings().voiceRate || 1) === r ? "on" : ""}">${r === 1 ? "Normal" : r + "×"}</button>`).join("")}</div></label>
     <p class="small muted">${
       Eleven.enabled()
@@ -152,6 +153,12 @@ function wireMicCheck() {
   else deviceVoices();
   sel.addEventListener("change", () => Store.set("settings", { ...getSettings(), [sel.dataset.kind === "eleven" ? "elevenVoice" : "voiceURI"]: sel.value }));
   document.getElementById("mc-say").addEventListener("click", (e) => soundCheck(e.currentTarget));
+  document.querySelectorAll("#mc-send [data-send]").forEach((b) =>
+    b.addEventListener("click", () => {
+      Store.set("settings", { ...getSettings(), sendAfter: b.dataset.send });
+      document.querySelectorAll("#mc-send button").forEach((x) => x.classList.toggle("on", x === b));
+    })
+  );
   document.querySelectorAll("#mc-rate [data-rate]").forEach((b) =>
     b.addEventListener("click", () => {
       Store.set("settings", { ...getSettings(), voiceRate: +b.dataset.rate });
@@ -353,7 +360,14 @@ function renderLive() {
     if (you) you.style.setProperty("--lvl", P.listening ? Math.max(0.15, Mic.level) : 0);
   }, 80);
   document.getElementById("lv-end").onclick = () => endPractice();
-  document.getElementById("lv-send").onclick = () => (P.listening ? P.listener?.flush() : null);
+  document.getElementById("lv-send").onclick = () => {
+    if (P.listening) return P.listener?.flush();
+    if (P.pending && !P.speaking && !P.thinking) {
+      const t = P.pending;
+      P.pending = "";
+      onMyTurn(t, Math.max(3, t.split(/\s+/).length / 2.4));
+    }
+  };
   // The big orb: tap to talk, tap again to send. On iPhone every turn starts here (Apple requires a tap).
   document.getElementById("lv-you").onclick = () => {
     Voice.unlock();
@@ -473,16 +487,20 @@ function listen() {
   const youText = document.getElementById("lv-you-text");
   if (youText) youText.textContent = "";
   P.listening = true;
+  const initial = P.pending || "";
+  P.pending = "";
   P.listener = new Listener({
-    silenceMs: 2000,
+    silenceMs: sendDelayMs(),
+    initial,
     onText: (t) => {
       const el = document.getElementById("lv-you-text");
       if (el) el.textContent = t;
     },
     onTurn: (text, duration) => onMyTurn(text, duration),
-    onState: (s, err) => {
+    onState(s, err, kept) {
       if (s === "listening") {
-        setStatus("Listening… pause for a moment to send.", "live");
+        const d = getSettings().sendAfter || "3";
+        setStatus(d === "tap" ? "Listening… tap the mic (or Send now) when you're done." : `Listening… take your time — it sends after a ${d}-second pause.`, "live");
         setOrb("live");
         P.netRetries = 0;
         // Tone measurement (PC/Mac only) runs just while you talk, after recognition has the mic.
@@ -493,8 +511,16 @@ function listen() {
       }
       if (s === "needs-tap") {
         P.listening = false;
+        P.pending = (kept || "").trim();
         setOrb("tap");
-        setStatus(err === "not-allowed" ? "Tap the mic to talk. If nothing happens, allow Microphone and Speech Recognition for Safari in iPhone Settings → Privacy & Security." : "Tap the mic to keep talking.", "warn");
+        setStatus(
+          P.pending
+            ? "The mic paused. Tap the mic to keep talking, or tap Send now if you're done."
+            : err === "not-allowed"
+              ? "Tap the mic to talk. If nothing happens, allow Microphone and Speech Recognition for Safari in iPhone Settings → Privacy & Security."
+              : "Tap the mic to keep talking.",
+          "warn"
+        );
       }
       if (s === "error") {
         // Fully stop this listener so nothing keeps running in the background.
@@ -522,6 +548,7 @@ function listen() {
 
 async function onMyTurn(text, duration) {
   P.listening = false;
+  P.pending = "";
   const audio = Mic.endTurn();
   Mic.close();
   P.thread.push({ from: "me", text, duration, audio });

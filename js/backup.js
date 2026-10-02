@@ -1,7 +1,7 @@
 // Data safety: automatic restore points on every app update, full backup files, and restore.
 // All app data lives in this browser under "rb.*" keys; nothing here ever deletes it without a restore the user asked for.
 
-const APP_VERSION = "2026.10.01c";
+const APP_VERSION = "2026.10.01d";
 
 const Backup = {
   dataKeys() {

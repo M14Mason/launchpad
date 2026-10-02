@@ -318,12 +318,31 @@ const Voice = {
   },
 };
 
-// Speech-to-text for one turn; sends after `silenceMs` of quiet.
-// PC/Mac: keeps listening across browser timeouts. iPhone: Apple only lets the mic start from a tap, so each turn
-// starts with a tap and ends when you pause — the "needs-tap" state asks for the next tap.
+// Speech-to-text for one turn. Sends after `silenceMs` of quiet (or only when you tap, with autoSend: false).
+// Keeps listening through normal pauses on every device. If the browser ends the session early
+// (iPhone does this), it restarts silently when allowed; otherwise it keeps your words and asks for a tap.
+// Safari can re-send earlier results as one growing transcript, so results are merged without repeats.
+function mergeTranscripts(parts) {
+  let acc = "";
+  for (const raw of parts) {
+    const t = raw.trim();
+    if (!t) continue;
+    const a = acc.toLowerCase();
+    const b = t.toLowerCase();
+    if (!acc || b.startsWith(a)) acc = t; // growing version of the same speech
+    else if (a.endsWith(b) || (b.length > 12 && a.includes(b))) continue; // already have it
+    else acc += " " + t;
+  }
+  return acc;
+}
+// How long to wait after you stop talking before sending (Settings / practice setup).
+function sendDelayMs() {
+  const v = getSettings().sendAfter;
+  return v === "tap" ? Infinity : (+v || 3) * 1000;
+}
 class Listener {
-  constructor({ onText, onTurn, onState, silenceMs = 2000 }) {
-    Object.assign(this, { onText, onTurn, onState, silenceMs });
+  constructor({ onText, onTurn, onState, silenceMs = 3000, initial = "", minWords = 3 }) {
+    Object.assign(this, { onText, onTurn, onState, silenceMs, initial, minWords });
     this.active = false;
   }
   get supported() {
@@ -332,70 +351,83 @@ class Listener {
   start() {
     if (!SR) return this.onState?.("unsupported");
     this.active = true;
-    this.final = this.interim = this.carried = "";
+    this.carried = this.initial || "";
+    this.final = this.carried;
+    this.interim = "";
     this.heardAt = this.firstAt = this.restarts = 0;
-    this.rec = new SR();
-    this.rec.continuous = !IS_IOS;
-    this.rec.interimResults = true;
-    this.rec.lang = "en-US";
-    this.rec.onresult = (e) => {
-      // Rebuild from the full results list each time (Safari re-sends earlier results; this avoids doubled words).
-      let fin = "";
+    this.lastText = this.carried;
+    this.begin();
+    clearInterval(this.timer);
+    this.timer = setInterval(() => {
+      if (!this.active || !this.heardAt || !isFinite(this.silenceMs)) return;
+      if (performance.now() - this.heardAt > this.silenceMs && this.text().split(/\s+/).filter(Boolean).length >= this.minWords) this.flush();
+    }, 200);
+  }
+  // One recognition session (a turn may use several if the browser stops early).
+  begin() {
+    const rec = new SR();
+    this.rec = rec;
+    rec.continuous = true;
+    rec.interimResults = true;
+    rec.lang = "en-US";
+    rec.onresult = (e) => {
+      if (rec !== this.rec) return;
+      const fins = [];
       let interim = "";
       for (let i = 0; i < e.results.length; i++) {
         const r = e.results[i];
-        if (r.isFinal) fin += (fin ? " " : "") + r[0].transcript.trim();
-        else interim += r[0].transcript;
+        if (r.isFinal) fins.push(r[0].transcript);
+        else interim = mergeTranscripts([interim, r[0].transcript]);
       }
-      this.final = [this.carried, fin].filter(Boolean).join(" ");
+      const fin = mergeTranscripts(fins);
+      this.final = mergeTranscripts([this.carried, fin]);
       this.interim = interim.trim();
-      const now = performance.now();
-      if (!this.firstAt) this.firstAt = now;
-      this.heardAt = now;
-      this.onText?.(this.text());
+      const text = this.text();
+      // Only real new words count as "still talking" (Safari re-sends the same results).
+      if (text !== this.lastText) {
+        this.lastText = text;
+        const now = performance.now();
+        if (!this.firstAt) this.firstAt = now;
+        this.heardAt = now;
+        this.onText?.(text);
+      }
     };
-    this.rec.onerror = (e) => {
+    rec.onerror = (e) => {
+      if (rec !== this.rec) return;
       if (e.error === "no-speech" || e.error === "aborted") return;
       this.lastError = e.error;
-      if (IS_IOS && this.active) {
-        // On iPhone, an error mid-turn means "start again from a tap", not "blocked forever".
-        if (this.text()) return this.flush();
-        this.active = false;
-        clearInterval(this.timer);
-        return this.onState?.("needs-tap", e.error);
-      }
+      // Mid-turn errors (iPhone "not-allowed" on restart, etc.): keep the words and wait for a tap.
+      if (this.active && (IS_IOS || this.restarts > 0) && ["not-allowed", "service-not-allowed"].includes(e.error)) return this.pause(e.error);
       this.onState?.("error", e.error);
     };
-    this.rec.onend = () => {
-      if (!this.active) return;
-      if (IS_IOS) {
-        // iPhone ends the session when you pause: send what was said, or wait for the next tap.
-        if (this.text()) return this.flush();
-        this.active = false;
-        clearInterval(this.timer);
-        return this.onState?.("needs-tap");
-      }
-      // PC/Mac: the browser stopped on its own (timeout) — keep the words so far and keep listening.
-      this.carried = this.final;
-      if (++this.restarts > 60) return this.onState?.("needs-tap");
+    rec.onend = () => {
+      if (rec !== this.rec || !this.active) return;
+      // The browser stopped on its own. Keep the words so far and start a new session.
+      this.carried = mergeTranscripts([this.final, this.interim]);
+      this.final = this.carried;
+      this.interim = "";
+      if (++this.restarts > 60) return this.pause();
       try {
-        this.rec.start();
+        this.begin();
       } catch {
-        this.onState?.("needs-tap");
+        this.pause();
       }
     };
     try {
-      this.rec.start();
-      this.onState?.("listening");
+      rec.start();
+      if (this.restarts === 0) this.onState?.("listening");
     } catch {
-      this.active = false;
-      return this.onState?.("needs-tap");
+      this.pause();
     }
+  }
+  // Stop listening but keep what was said; the next tap continues (initial = text()).
+  pause(err) {
+    this.active = false;
     clearInterval(this.timer);
-    this.timer = setInterval(() => {
-      if (!this.active || !this.heardAt) return;
-      if (performance.now() - this.heardAt > this.silenceMs && this.text().split(/\s+/).length >= 2) this.flush();
-    }, 200);
+    try {
+      this.rec?.abort();
+    } catch {}
+    this.onState?.("needs-tap", err, this.text());
   }
   text() {
     return `${this.final} ${this.interim}`.replace(/\s+/g, " ").trim();
@@ -409,8 +441,10 @@ class Listener {
   stop() {
     this.active = false;
     clearInterval(this.timer);
+    const rec = this.rec;
+    this.rec = null;
     try {
-      this.rec?.abort();
+      rec?.abort();
     } catch {}
     this.onState?.("idle");
   }

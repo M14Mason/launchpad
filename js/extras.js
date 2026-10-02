@@ -551,7 +551,14 @@ function renderPitch(root) {
         stopClock();
         scoreTake(text, Math.max(dur, (Date.now() - t0) / 1000 - 3));
       },
-      onState: (st, err) => {
+      onState: (st, err, kept) => {
+        // The mic stopped early (iPhone): score what was said instead of losing the take.
+        if (st === "needs-tap" && kept && kept.split(/\s+/).length >= 5) {
+          stopClock();
+          orb.dataset.state = "tap";
+          $("pt-hint").textContent = "Tap to start";
+          return scoreTake(kept, (Date.now() - t0) / 1000);
+        }
         if (st === "listening") {
           orb.dataset.state = "live";
           $("pt-hint").textContent = "Go — tap when you're done";
