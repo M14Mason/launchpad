@@ -1408,7 +1408,7 @@ function backupCardHTML() {
   const syncOn = Sync.enabled();
   return `<div class="card"><h3>Backup &amp; restore</h3>
     <div class="backup-status">
-      <div class="${syncOn ? "ok" : ""}"><strong>${syncOn ? "✓" : "○"} Cloud copy</strong><span class="small muted">${syncOn ? "Encrypted on your GitHub · " + (Sync.cfg().lastSync ? new Date(Sync.cfg().lastSync).toLocaleString() : "pending") : "Turn on sync above"}</span></div>
+      <div class="${syncOn ? "ok" : ""}"><strong>${syncOn ? "✓" : "○"} Cloud copy</strong><span class="small muted">${syncOn ? "Saved to your GitHub · " + (Sync.cfg().lastSync ? new Date(Sync.cfg().lastSync).toLocaleString() : "pending") : "Turn on sync above"}</span></div>
       <div class="${snaps.length ? "ok" : ""}"><strong>${snaps.length ? "✓" : "○"} Restore points</strong><span class="small muted">${snaps.length ? `${snaps.length} saved in this browser (made automatically on every update)` : "Made automatically on the next update"}</span></div>
       <div class="${last ? "ok" : ""}"><strong>${last ? "✓" : "○"} Backup file</strong><span class="small muted">${last ? "Last downloaded " + new Date(last).toLocaleDateString() : "Never — download one now"}</span></div>
     </div>
@@ -1428,24 +1428,22 @@ function syncCardHTML() {
     const last = Sync.cfg().lastSync;
     return `<div class="card" id="sync-card"><h3>Sync between devices</h3>
       <p class="small"><span class="badge eligible">Connected</span> ${last ? "Last synced " + new Date(last).toLocaleString() : "Not synced yet"}.</p>
-      <p class="small muted">Changes upload automatically (encrypted). Your other devices pick them up whenever you open the app.</p>
+      <p class="small muted">Changes upload automatically. Your other devices pick them up whenever you open the app.</p>
       <div class="row"><button class="btn primary" id="sync-now">Sync now</button><button class="btn" id="show-qr">Connect my phone</button><button class="btn" id="copy-code">Copy pairing code</button><button class="btn ghost" id="sync-off">Disconnect this device</button></div>
       <div id="qr-box"></div></div>`;
   }
   const pairBox = `<details class="pair-code" ${isStandalone() ? "open" : ""}><summary>Already synced on another device? Connect with a pairing code</summary>
       <p class="small muted">On the connected device: Settings → <strong>Copy pairing code</strong>, send it to yourself (Notes, Messages, AirDrop), then paste it here.</p>
-      <label class="field"><span>Pairing code</span><input type="text" id="pair-code" placeholder="Paste the code" autocomplete="off" autocapitalize="off" spellcheck="false"></label>
-      <label class="field"><span>Sync passphrase</span><input type="password" id="pair-code-pass" autocomplete="current-password"></label>
+      <label class="field"><span>Pairing code</span><input type="text" id="pair-code" placeholder="Paste the code" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false"></label>
       <button class="btn primary" id="pair-code-go">Connect with code</button></details>`;
   return `<div class="card" id="sync-card"><h3>Sync between devices</h3>
-    <p class="small muted">Keeps your Skill Bank, resumes, coach chats, phone number and API key the same on your PC and phone. Everything is encrypted with your passphrase before it's saved to a secret gist on your GitHub account.</p>
+    <p class="small muted">Keeps your Skill Bank, resumes, study progress, settings, phone number and API keys the same on your PC, laptop and phone. It's saved to a secret gist on your GitHub account — no passphrase needed.</p>
     <ol class="small steps-list">
       <li><a href="https://github.com/settings/tokens/new?scopes=gist&description=Launchpad%20sync" target="_blank" rel="noopener">Create a GitHub token ↗</a> — the “gist” box is already checked. Pick an expiration, click <strong>Generate token</strong>, and copy it.</li>
-      <li>Paste it here and choose a passphrase (8+ characters) you'll remember.</li>
-      <li>Click Connect, then use <strong>Connect my phone</strong> to scan a QR code.</li>
+      <li>Paste it here and click Connect.</li>
+      <li>On your other devices: use <strong>Connect my phone</strong> (QR code) or <strong>Copy pairing code</strong> — or paste the same token there.</li>
     </ol>
-    <label class="field"><span>GitHub token</span><input type="password" id="sync-token" placeholder="ghp_…" autocomplete="off"></label>
-    <label class="field"><span>Sync passphrase</span><input type="password" id="sync-pass" placeholder="Same on every device" autocomplete="new-password"></label>
+    <label class="field"><span>GitHub token</span><input type="password" id="sync-token" placeholder="ghp_…" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false"></label>
     <button class="btn primary" id="sync-connect">Connect</button>
     ${pairBox}</div>`;
 }
@@ -1469,8 +1467,8 @@ function chooseSide() {
   });
 }
 
-async function doConnect(token, pass) {
-  const result = await Sync.connect(token, pass, chooseSide);
+async function doConnect(token) {
+  const result = await Sync.connect(token, chooseSide);
   toast(result === "cloud" ? "Connected — loaded your synced data." : "Connected — your data is synced.");
 }
 
@@ -1479,9 +1477,8 @@ function wireSyncCard() {
   $("sync-connect")?.addEventListener("click", (e) =>
     busy(e.currentTarget, async () => {
       const token = $("sync-token").value.trim();
-      const pass = $("sync-pass").value;
       if (!token) return toast("Paste your GitHub token first.");
-      await doConnect(token, pass);
+      await doConnect(token);
       renderSettings();
     })
   );
@@ -1491,7 +1488,7 @@ function wireSyncCard() {
       const pair = Sync.readPairCode(raw.includes("#pair/") ? raw.split("#pair/")[1] : raw);
       if (!pair) return toast("That pairing code isn't valid — copy it again from your other device.");
       Sync.setCfg({ gistId: pair.g });
-      await doConnect(pair.t, $("pair-code-pass").value);
+      await doConnect(pair.t);
       renderSettings();
     })
   );
@@ -1518,7 +1515,7 @@ function wireSyncCard() {
   });
   $("show-qr")?.addEventListener("click", async () => {
     const box = $("qr-box");
-    box.innerHTML = `<p class="small">Scan this with your phone's camera, open the link, and enter the same passphrase. <strong>Don't share this code</strong> — it lets a device join your sync (your passphrase is still needed to read anything).</p><div id="qr" class="qr"></div>`;
+    box.innerHTML = `<p class="small">Scan this with your phone's camera and open the link — it connects automatically. <strong>Don't share this code</strong>: it gives full access to your synced data.</p><div id="qr" class="qr"></div>`;
     try {
       if (!window.QRCode)
         await new Promise((res, rej) => {
@@ -1540,13 +1537,12 @@ function renderPair() {
   if (!pendingPair) return (app.innerHTML = empty(`That pairing link has already been used. On your PC, open Settings → Connect my phone to get a fresh QR code. <a href="#settings">Settings</a>`));
   app.innerHTML = `<div class="card pair">
       <h1>Connect this device</h1>
-      <p class="muted">Enter the sync passphrase you chose on your other device. Your data will load in a few seconds.</p>
-      <label class="field"><span>Sync passphrase</span><input type="password" id="pair-pass" autocomplete="current-password"></label>
+      <p class="muted">Tap Connect and your synced data loads in a few seconds.</p>
       <button class="btn primary block" id="pair-go">Connect</button>
     </div>`;
   document.getElementById("pair-go").addEventListener("click", (e) =>
     busy(e.currentTarget, async () => {
-      await doConnect(pendingPair.t, document.getElementById("pair-pass").value);
+      await doConnect(pendingPair.t);
       pendingPair = null;
       go("dashboard");
     })

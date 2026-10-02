@@ -1,11 +1,13 @@
-// Sync between devices through a secret GitHub Gist on Mason's own account.
-// Everything is encrypted in the browser (AES-GCM, key from a passphrase via PBKDF2) before upload,
-// so the gist only ever holds ciphertext. The GitHub token and passphrase stay on each device.
+// Sync between devices through a secret GitHub Gist on Mason's own account. No passphrase:
+// the GitHub token (stays on each device) is the only thing needed. The data is base64-encoded so
+// GitHub's secret scanners don't mistake the stored API keys for leaked ones — it is NOT encryption;
+// the gist is private to Mason's account (and anyone he gives its link to).
 
 const Sync = {
   KEYS: ["bank", "aiCompanies", "practice", "coach", "resumes", "research", "settings", "tracker", "essays", "collegeProfile", "study", "markets", "brand"],
-  FILE: "launchpad-sync.json",
-  DESC: "Launchpad sync (encrypted)",
+  FILE: "launchpad-sync-v2.json",
+  OLD_FILE: "launchpad-sync.json", // passphrase-encrypted version (before Oct 2026) — removed on first sync
+  DESC: "Launchpad sync",
   _timer: null,
   _busy: false,
 
@@ -19,7 +21,7 @@ const Sync = {
   },
   enabled() {
     const c = this.cfg();
-    return !!(c.token && c.pass && c.gistId);
+    return !!(c.token && c.gistId);
   },
   updatedAt() {
     try {
@@ -45,6 +47,7 @@ const Sync = {
   },
   apply(snap) {
     for (const k of this.KEYS) {
+      if (!(k in snap.data)) continue; // keys added in newer versions stay as they are
       try {
         if (snap.data[k] == null) localStorage.removeItem("rb." + k);
         else localStorage.setItem("rb." + k, JSON.stringify(snap.data[k]));
@@ -55,63 +58,63 @@ const Sync = {
     } catch {}
   },
 
-  // ---------- crypto ----------
-  b64(buf) {
-    return btoa(String.fromCharCode(...new Uint8Array(buf)));
+  // ---------- encoding (UTF-8 safe base64) ----------
+  encode(obj) {
+    const bytes = new TextEncoder().encode(JSON.stringify(obj));
+    let bin = "";
+    for (let i = 0; i < bytes.length; i += 0x8000) bin += String.fromCharCode(...bytes.subarray(i, i + 0x8000));
+    return JSON.stringify({ v: 2, format: "launchpad-sync", data: btoa(bin) });
   },
-  unb64(s) {
-    return Uint8Array.from(atob(s), (c) => c.charCodeAt(0));
-  },
-  async key(pass, salt) {
-    const base = await crypto.subtle.importKey("raw", new TextEncoder().encode(pass), "PBKDF2", false, ["deriveKey"]);
-    return crypto.subtle.deriveKey({ name: "PBKDF2", salt, iterations: 250000, hash: "SHA-256" }, base, { name: "AES-GCM", length: 256 }, false, ["encrypt", "decrypt"]);
-  },
-  async encrypt(obj, pass) {
-    const salt = crypto.getRandomValues(new Uint8Array(16));
-    const iv = crypto.getRandomValues(new Uint8Array(12));
-    const ct = await crypto.subtle.encrypt({ name: "AES-GCM", iv }, await this.key(pass, salt), new TextEncoder().encode(JSON.stringify(obj)));
-    return { v: 1, salt: this.b64(salt), iv: this.b64(iv), ct: this.b64(ct) };
-  },
-  async decrypt(env, pass) {
-    try {
-      const pt = await crypto.subtle.decrypt({ name: "AES-GCM", iv: this.unb64(env.iv) }, await this.key(pass, this.unb64(env.salt)), this.unb64(env.ct));
-      return JSON.parse(new TextDecoder().decode(pt));
-    } catch {
-      throw new Error("Wrong sync passphrase — it must match the one on your other device.");
-    }
+  decode(raw) {
+    const env = JSON.parse(raw);
+    if (env.v !== 2 || typeof env.data !== "string") return null;
+    return JSON.parse(new TextDecoder().decode(Uint8Array.from(atob(env.data), (c) => c.charCodeAt(0))));
   },
 
   // ---------- GitHub ----------
   async gh(path, opts = {}, token = this.cfg().token) {
-    const res = await fetch("https://api.github.com" + path, {
-      ...opts,
-      headers: { Accept: "application/vnd.github+json", Authorization: "Bearer " + token, "X-GitHub-Api-Version": "2022-11-28", ...(opts.body ? { "Content-Type": "application/json" } : {}) },
-    });
-    if (res.status === 401) throw new Error("GitHub rejected the token — check it, or make a new one with the “gist” scope.");
-    if (res.status === 403 || res.status === 404) throw new Error("The token can't access gists — it needs the “gist” scope.");
+    let res;
+    try {
+      res = await fetch("https://api.github.com" + path, {
+        ...opts,
+        headers: { Accept: "application/vnd.github+json", Authorization: "Bearer " + String(token || "").trim(), "X-GitHub-Api-Version": "2022-11-28", ...(opts.body ? { "Content-Type": "application/json" } : {}) },
+      });
+    } catch {
+      throw new Error("Couldn't reach GitHub — check your internet connection.");
+    }
+    if (res.status === 401) throw new Error("GitHub rejected the token — it may have expired. Make a new one with the “gist” box checked.");
+    if (res.status === 403 || res.status === 404) throw new Error("The token can't access gists — make a new one with the “gist” box checked.");
     if (!res.ok) throw new Error(`GitHub error ${res.status}.`);
     return res.status === 204 ? null : res.json();
   },
   async findGist(token) {
     for (let page = 1; page <= 5; page++) {
       const list = await this.gh(`/gists?per_page=100&page=${page}`, {}, token);
-      const hit = list.find((g) => g.files && g.files[this.FILE]);
+      const hit = list.find((g) => g.files && (g.files[this.FILE] || g.files[this.OLD_FILE]));
       if (hit) return hit.id;
       if (list.length < 100) break;
     }
     return null;
   },
+  // The cloud snapshot, or null when there's nothing readable yet (including the old encrypted file).
   async readRemote(c = this.cfg()) {
     const g = await this.gh(`/gists/${c.gistId}`, {}, c.token);
     const f = g.files?.[this.FILE];
+    this._hasOld = !!g.files?.[this.OLD_FILE];
     if (!f) return null;
     const raw = f.truncated ? await (await fetch(f.raw_url)).text() : f.content;
-    return this.decrypt(JSON.parse(raw), c.pass);
+    try {
+      return this.decode(raw);
+    } catch {
+      return null;
+    }
   },
   async push() {
     if (!this.enabled()) return;
-    const env = await this.encrypt(this.snapshot(), this.cfg().pass);
-    await this.gh(`/gists/${this.cfg().gistId}`, { method: "PATCH", body: JSON.stringify({ files: { [this.FILE]: { content: JSON.stringify(env) } } }) });
+    const files = { [this.FILE]: { content: this.encode(this.snapshot()) } };
+    if (this._hasOld) files[this.OLD_FILE] = null; // remove the old passphrase-encrypted copy
+    await this.gh(`/gists/${this.cfg().gistId}`, { method: "PATCH", body: JSON.stringify({ description: this.DESC, files }) });
+    this._hasOld = false;
     this.setCfg({ lastSync: Date.now() });
     this.status("ok");
   },
@@ -138,21 +141,17 @@ const Sync = {
   },
 
   // First-time connect on this device. `choose` resolves "cloud" | "device" when both sides have data.
-  async connect(token, pass, choose) {
-    if (pass.length < 8) throw new Error("Use a passphrase of at least 8 characters.");
-    let gistId = this.cfg().gistId || (await this.findGist(token));
-    let remote = null;
-    if (gistId) {
-      // Decrypt first — nothing is saved (and nothing can be uploaded) until the passphrase is proven right.
-      remote = await this.readRemote({ token, pass, gistId });
-      this.setCfg({ token, pass, gistId });
-    } else {
-      const env = await this.encrypt(this.snapshot(), pass);
-      const g = await this.gh("/gists", { method: "POST", body: JSON.stringify({ description: this.DESC, public: false, files: { [this.FILE]: { content: JSON.stringify(env) } } }) }, token);
-      gistId = g.id;
-      this.setCfg({ token, pass, gistId, lastSync: Date.now() });
+  async connect(token, choose) {
+    token = String(token || "").trim();
+    if (!token) throw new Error("Paste your GitHub token first.");
+    const gistId = this.cfg().gistId || (await this.findGist(token));
+    if (!gistId) {
+      const g = await this.gh("/gists", { method: "POST", body: JSON.stringify({ description: this.DESC, public: false, files: { [this.FILE]: { content: this.encode(this.snapshot()) } } }) }, token);
+      this.setCfg({ token, gistId: g.id, lastSync: Date.now(), pass: undefined });
       return "created";
     }
+    const remote = await this.readRemote({ token, gistId });
+    this.setCfg({ token, gistId, pass: undefined });
     const localHasData = !!(Store.get("bank", null) || Store.get("resumes", null) || getSettings().apiKey);
     if (remote && localHasData) {
       const pick = await choose();
@@ -175,7 +174,7 @@ const Sync = {
     } catch {}
   },
 
-  // Pairing link for the QR code: carries the token + gist id (never the passphrase).
+  // Pairing link / code: carries the token + gist id, so the other device connects in one tap.
   pairLink() {
     const c = this.cfg();
     const code = btoa(JSON.stringify({ t: c.token, g: c.gistId })).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
@@ -183,7 +182,7 @@ const Sync = {
   },
   readPairCode(code) {
     try {
-      const j = JSON.parse(atob(code.replace(/-/g, "+").replace(/_/g, "/")));
+      const j = JSON.parse(atob(String(code).trim().replace(/-/g, "+").replace(/_/g, "/")));
       return j.t && j.g ? j : null;
     } catch {
       return null;

@@ -29,7 +29,7 @@ Double-click `index.html`. No install needed.
 
 ## Where data lives
 
-Resume facts are in `js/profile.js`, which is public in the repo. Your phone number, API key, Skill Bank answers, coach chats, and saved resumes are stored in your browser. To keep them the same on your PC and phone, turn on **Settings → Sync between devices**. It encrypts everything with your passphrase and saves it to a secret gist on your GitHub account.
+Resume facts are in `js/profile.js`, which is public in the repo. Your phone number, API key, Skill Bank answers, coach chats, and saved resumes are stored in your browser. To keep them the same on your PC and phone, turn on **Settings → Sync between devices**. It saves everything to a secret gist on your GitHub account. Only your GitHub token is needed, and there is no passphrase.
 
 ## AI features (optional)
 
