@@ -465,15 +465,24 @@ function paletteItems() {
     ["College profile", "#profile", "cap"],
     ["Skill Bank", "#skills", "award"],
     ["Study", "#study", "book"],
-    ["Networking practice", "#roleplay", "message"],
-    ["Voice mock interview", "#mock", "mic"],
+    ["Spoken practice", "#practice", "mic"],
+    ["Networking practice", "#practice/networking", "message"],
+    ["Mock interview", "#practice/interview", "mic"],
+    ["Financial planning practice", "#practice/fp", "trend"],
+    ["Sales practice", "#practice/sales", "target"],
+    ["Market brief", "#markets/brief", "trend"],
+    ["Paper trading", "#markets/paper", "gauge"],
+    ["Elevator pitch", "#brand/pitch", "mic"],
+    ["LinkedIn optimizer", "#brand/linkedin", "users"],
+    ["Case studies", "#cases", "briefcase"],
+    ["Mixed review quiz", "#quiz/mix", "sparkles"],
     ["Saved resume versions", "#resumes", "layers"],
     ["Settings", "#settings", "settings"],
   ].map(([t, h, i]) => ({ group: "Pages", title: t, href: h, icon: i }));
   const programs = allRoles().map(({ r, c }) => ({ group: "Programs", title: `${r.org || c.name} — ${r.title}`, href: "#internship/" + encodeURIComponent(r.id), icon: "briefcase", sub: STATUS_LABEL[r.eligibility.status] }));
   const cols = COLLEGES.map((c) => ({ group: "Colleges", title: c.name, href: "#college/" + c.id, icon: "cap", sub: c.rate + "% admit" }));
   const skills = allSkills(getBank()).map((s) => ({ group: "Skills", title: s.name, href: "#coach/" + s.id, icon: "award", sub: "Coach" }));
-  const lessons = TRACKS.flatMap((t) => t.lessons.map((l, i) => ({ group: "Lessons", title: l, href: `#lesson/${t.id}/${i}`, icon: "book", sub: t.name })));
+  const lessons = allTracks().flatMap((t) => t.lessons.map((l, i) => ({ group: "Lessons", title: l, href: `#lesson/${t.id}/${i}`, icon: "book", sub: t.name })));
   return [...pages, ...programs, ...cols, ...skills, ...lessons];
 }
 

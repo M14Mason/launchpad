@@ -18,6 +18,8 @@ const NAV = [
   { id: "studio", icon: "file", label: "Resume Studio", short: "Studio" },
   { id: "skills", icon: "award", label: "Skill Bank", short: "Skills", more: true },
   { id: "study", icon: "book", label: "Study", short: "Study" },
+  { id: "markets", icon: "trend", label: "Markets", short: "Markets", more: true },
+  { id: "brand", icon: "users", label: "Pitch & LinkedIn", short: "Pitch", more: true },
   { id: "settings", icon: "settings", label: "Settings", short: "Settings", more: true, bottom: true },
 ];
 (function buildNav() {
@@ -141,22 +143,30 @@ function empty(msg) {
 }
 
 // ---------- router ----------
-const NAV_FOR = { dashboard: "dashboard", tracker: "tracker", internships: "internships", internship: "internships", generate: "internships", colleges: "colleges", college: "colleges", skills: "skills", coach: "skills", resumes: "studio", resume: "studio", studio: "studio", settings: "settings", study: "study", lesson: "study", roleplay: "study", mock: "study", practice: "study", quiz: "study", profile: "colleges" };
+const NAV_FOR = { dashboard: "dashboard", tracker: "tracker", internships: "internships", internship: "internships", generate: "internships", colleges: "colleges", college: "colleges", skills: "skills", coach: "skills", resumes: "studio", resume: "studio", studio: "studio", settings: "settings", study: "study", lesson: "study", roleplay: "study", mock: "study", practice: "study", quiz: "study", profile: "colleges", session: "study", exam: "study", cases: "study", case: "study", markets: "markets", brand: "brand" };
 function route() {
   const [view = "dashboard", ...rest] = location.hash.slice(1).split("/");
   const id = decodeURIComponent(rest.join("/"));
   document.querySelectorAll("#nav a").forEach((a) => a.classList.toggle("active", a.dataset.nav === (NAV_FOR[view] || "dashboard")));
   document.getElementById("nav-more")?.classList.toggle("active", !!document.querySelector("#nav a.more-item.active"));
   moveNavIndicator();
-  const views = { dashboard: renderDashboard, internships: renderInternships, internship: renderInternship, generate: renderGenerate, colleges: renderColleges, college: renderCollege, skills: renderSkills, coach: renderCoach, resumes: renderResumes, resume: renderResumeView, settings: renderSettings, pair: renderPair, tracker: renderTracker, study: (id) => (id ? renderTrack(id) : renderStudy()), lesson: renderLesson, roleplay: () => go("practice/networking"), mock: () => go("practice/interview"), practice: renderPractice, quiz: renderQuiz, profile: renderCollegeProfile, studio: renderStudio };
-  // Leaving a page stops any live mic or spoken question.
+  const views = { dashboard: renderDashboard, internships: renderInternships, internship: renderInternship, generate: renderGenerate, colleges: renderColleges, college: renderCollege, skills: renderSkills, coach: renderCoach, resumes: renderResumes, resume: renderResumeView, settings: renderSettings, pair: renderPair, tracker: renderTracker, study: (id) => (id ? renderTrack(id) : renderStudy()), lesson: renderLesson, roleplay: () => go("practice/networking"), mock: () => go("practice/interview"), practice: renderPractice, quiz: renderQuiz, profile: renderCollegeProfile, studio: renderStudio, markets: renderMarkets, brand: renderBrand, session: renderSession, exam: renderExam, cases: renderCases, case: renderCase };
+  // Leaving a page stops any live mic, dictation, replay or spoken question.
   if (dictate.rec) dictate.rec.stop();
+  try {
+    dictateInto.l?.stop();
+    wireMicCheck.l?.stop();
+    replayThread.on = false;
+    if (view !== "exam") clearInterval(drawExam._t);
+  } catch {}
   try {
     Voice.cancel();
     if (P.phase === "live" && view !== "practice") {
       P.listener?.stop();
       P.listening = false;
-      P.status = "Paused — tap Resume when you are back.";
+      P.status = "Paused — tap the mic when you are back.";
+      P.orb = "tap";
+      P.speaking = false;
     }
   } catch {}
   (views[view] || renderDashboard)(id);
@@ -267,6 +277,7 @@ function renderDashboard() {
   const soon = [...tracked, ...typical].slice(0, 5);
   const cols = ["col-uc-san-diego", "col-ucla", "col-usc"].map((id) => COLLEGES.find((c) => c.id === id)).filter(Boolean);
 
+  const heads = remindersHTML();
   app.innerHTML = `
     <section class="hero">
       <div class="hero-text">
@@ -293,6 +304,7 @@ function renderDashboard() {
         .join("")}
     </div>
 
+    ${heads}
     <div class="two-col">
       <section class="card">
         <div class="section-head"><h2>Next moves</h2><span class="small muted">The actions that raise your odds most</span></div>
@@ -311,6 +323,8 @@ function renderDashboard() {
         }
       </section>
     </div>
+
+    ${keepSharpHTML()}
 
     <section>
       <div class="section-head"><h2>Best matches for ${esc(GOALS[goal()].label.toLowerCase())}</h2><a class="small" href="#settings">Change goal</a></div>
@@ -333,6 +347,26 @@ function renderDashboard() {
         })
         .join("")}</div>
     </section>`;
+  wireReminders();
+}
+
+// Daily habits strip: market brief, paper portfolio, last spoken practice, elevator pitch.
+function keepSharpHTML() {
+  const m = markets();
+  const brief = m.briefs[todayKey()];
+  const p = m.portfolio;
+  const val = p ? portValue(p, Quotes.cache) : null;
+  const last = (study().sessions || [])[0];
+  const run = brand().runs[0];
+  const tiles = [
+    ["#markets/brief", "trend", "Market brief", brief ? "Read today's 3 stories" : "Today's brief is ready to write", brief ? "Done today" : "New"],
+    ["#markets/paper", "gauge", "Paper portfolio", p ? `${money(val)} · ${val >= 10000 ? "+" : ""}${(((val - 10000) / 10000) * 100).toFixed(1)}%` : "Start with $10,000", p ? `${p.trades.length} trades` : "Try it"],
+    ["#practice", "mic", "Spoken practice", last ? `Last: ${last.score}/100 · ${last.label}` : "Interview, sales, planning", last ? new Date(last.at).toLocaleDateString() : "Start"],
+    ["#brand/pitch", "users", "Elevator pitch", run ? `Last take ${run.score}/100` : "Build your 30-second story", run ? "Practice again" : "Build it"],
+  ];
+  return `<section><div class="section-head"><h2>Keep sharp</h2><span class="small muted">10 minutes a day</span></div><div class="grid cards4">${tiles
+    .map(([href, ic, t, sub, tag]) => `<a class="card sharp" href="${href}"><div class="spread"><div class="track-icon">${icon(ic)}</div><span class="pill">${esc(tag)}</span></div><div class="row-title">${t}</div><div class="small muted">${esc(sub)}</div></a>`)
+    .join("")}</div></section>`;
 }
 
 // ================= INTERNSHIPS =================
@@ -1277,6 +1311,18 @@ function renderSettings() {
           <option value="claude-sonnet-5" ${s.model === "claude-sonnet-5" ? "selected" : ""}>Claude Sonnet 5 (cheaper)</option></select></label>
         <div class="row"><button class="btn primary" id="save-ai">Save</button><button class="btn" id="test-ai">Test key</button></div>
         <p class="small muted">Only use this on your own device.</p></div>
+      <div class="card"><h3>Human voice (ElevenLabs)</h3>
+        <p class="small muted">Makes interviewers and clients sound like real people. Free plan: 10,000 credits a month (about 20 minutes of speech with the Flash model). Get a key at elevenlabs.io → Developers → API Keys (allow Text to Speech, Voices and User read). Without a key, the device voice is used.</p>
+        <label class="field"><span>ElevenLabs API key</span><input type="password" id="elkey" value="${esc(s.elevenKey || "")}" placeholder="sk_…" autocomplete="off"></label>
+        <label class="field"><span>Voice model</span><select id="elmodel">
+          <option value="eleven_flash_v2_5" ${(s.elevenModel || "eleven_flash_v2_5") === "eleven_flash_v2_5" ? "selected" : ""}>Flash v2.5 — fastest, half the credits (recommended)</option>
+          <option value="eleven_multilingual_v2" ${s.elevenModel === "eleven_multilingual_v2" ? "selected" : ""}>Multilingual v2 — richest, slower</option></select></label>
+        <div class="row"><button class="btn primary" id="save-el">Save</button><button class="btn" id="test-el">${icon("volume")} Test voice</button>${s.elevenKey ? `<button class="btn ghost" id="clear-el">Remove</button>` : ""}</div>
+        <p class="small muted" id="el-usage"></p></div>
+      <div class="card"><h3>Market data (paper trading)</h3>
+        <p class="small muted">Live stock quotes for the paper-trading simulator. Free key at finnhub.io (60 quotes a minute). Without it, prices come from Claude's web search (slower). Crypto prices (BTC, ETH…) work without any key.</p>
+        <label class="field"><span>Finnhub API key</span><input type="password" id="fhkey" value="${esc(s.finnhubKey || "")}" placeholder="optional" autocomplete="off"></label>
+        <button class="btn primary" id="save-fh">Save</button></div>
       ${syncCardHTML()}
       ${backupCardHTML()}
     </div>`;
@@ -1285,6 +1331,28 @@ function renderSettings() {
   const KEYS = ["bank", "aiCompanies", "practice", "coach", "resumes", "research", "tracker", "essays"];
   $("save-contact").onclick = () => (save({ phone: $("phone").value.trim(), goal: $("goal").value }), toast("Saved."));
   $("save-ai").onclick = () => (save({ apiKey: $("apikey").value.trim(), model: $("model").value }), toast("Saved."));
+  const showUsage = () =>
+    Eleven.enabled() &&
+    Eleven.usage()
+      .then((u) => ($("el-usage").textContent = `Used ${u.used.toLocaleString()} of ${u.limit.toLocaleString()} credits this month${u.resets ? ` · resets ${u.resets.toLocaleDateString()}` : ""}.`))
+      .catch((e) => ($("el-usage").textContent = e.message));
+  showUsage();
+  $("save-el").onclick = () => {
+    save({ elevenKey: $("elkey").value.trim(), elevenModel: $("elmodel").value });
+    Eleven._voices = null;
+    toast("Saved.");
+    renderSettings();
+  };
+  $("test-el").onclick = (e) =>
+    busy(e.currentTarget, async () => {
+      save({ elevenKey: $("elkey").value.trim(), elevenModel: $("elmodel").value });
+      Voice.unlock();
+      Voice._warned = false;
+      await Eleven.play("Hi Mason! This is how your interviewer will sound. Pretty human, right?", { gender: "female", seed: "test", isCurrent: () => true });
+      showUsage();
+    });
+  if ($("clear-el")) $("clear-el").onclick = () => (save({ elevenKey: "" }), renderSettings());
+  $("save-fh").onclick = () => (save({ finnhubKey: $("fhkey").value.trim() }), toast("Saved."));
   $("test-ai").onclick = (e) =>
     busy(e.currentTarget, async () => {
       save({ apiKey: $("apikey").value.trim(), model: $("model").value });

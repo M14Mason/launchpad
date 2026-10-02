@@ -17,14 +17,14 @@ const TRACKS = [
     name: "Finance fundamentals",
     icon: "briefcase",
     blurb: "The core ideas every finance interviewer expects: markets, statements, valuation, rates and risk.",
-    lessons: ["How the stock market actually works", "Reading an income statement", "Balance sheets and cash flow", "Valuation basics: P/E, EV/EBITDA and DCF", "Interest rates, inflation and the Fed", "Diversification and portfolio risk", "Options basics: calls, puts and risk", "How banks, hedge funds and asset managers make money"],
+    lessons: ["How the stock market actually works", "Reading an income statement", "Balance sheets and cash flow", "Valuation basics: P/E, EV/EBITDA and DCF", "Interest rates, inflation and the Fed", "Diversification and portfolio risk", "Options basics: calls, puts and risk", "How banks, hedge funds and asset managers make money", "Bonds and the yield curve", "What moves a stock on earnings day", "Market structure: exchanges, market makers and order types", "Behavioral finance: the biases that cost investors money"],
   },
   {
     id: "planning",
     name: "Financial planning",
     icon: "target",
     blurb: "Budgeting, saving, investing and retirement — and how to talk to a real client about money.",
-    lessons: ["Budgeting and the 50/30/20 rule", "Emergency funds and short-term savings", "Compound interest and starting early", "Risk tolerance and time horizon", "Roth IRA, 401(k) and tax-advantaged accounts", "Index funds vs. picking stocks", "Running a first client meeting: discovery questions", "Explaining money without jargon"],
+    lessons: ["Budgeting and the 50/30/20 rule", "Emergency funds and short-term savings", "Compound interest and starting early", "Risk tolerance and time horizon", "Roth IRA, 401(k) and tax-advantaged accounts", "Index funds vs. picking stocks", "Running a first client meeting: discovery questions", "Explaining money without jargon", "Insurance basics: what a planner checks", "Taxes 101 for a planner", "Saving for college: 529 plans", "Building a simple financial plan, start to finish"],
     practice: "fp",
   },
   {
@@ -32,7 +32,7 @@ const TRACKS = [
     name: "Algorithmic trading",
     icon: "code",
     blurb: "Take your bot further: rigorous backtests, realistic costs, risk metrics and live vs. paper trading.",
-    lessons: ["From trading idea to testable rule", "Walk-forward and out-of-sample testing", "Transaction costs, slippage and fills", "Risk metrics: Sharpe, drawdown and win rate", "Paper trading vs. live trading with Alpaca", "Avoiding overfitting with simpler strategies", "Logging and monitoring a bot that runs all day"],
+    lessons: ["From trading idea to testable rule", "Walk-forward and out-of-sample testing", "Transaction costs, slippage and fills", "Risk metrics: Sharpe, drawdown and win rate", "Paper trading vs. live trading with Alpaca", "Avoiding overfitting with simpler strategies", "Logging and monitoring a bot that runs all day", "Mean reversion vs. momentum strategies", "Portfolio-level risk across many positions", "Market regimes and when strategies stop working"],
   },
   {
     id: "python",
@@ -60,7 +60,7 @@ const TRACKS = [
     name: "Interviewing",
     icon: "mic",
     blurb: "Tell your story clearly with STAR, then practice out loud with a voice interviewer.",
-    lessons: ["The STAR method", "Telling your trading-bot story", "Answering “Tell me about yourself”", "Questions to ask the interviewer", "Answering technical questions out loud", "Talking about weaknesses honestly", "Interviewing for finance programs", "Video interview setup and etiquette"],
+    lessons: ["The STAR method", "Telling your trading-bot story", "Answering “Tell me about yourself”", "Questions to ask the interviewer", "Answering technical questions out loud", "Talking about weaknesses honestly", "Interviewing for finance programs", "Video interview setup and etiquette", "Pitching a stock in an interview", "Brain teasers and market-sizing questions", "Group interviews and case interviews", "The thank-you note and follow-up"],
     practice: "interview",
   },
   {
@@ -68,7 +68,7 @@ const TRACKS = [
     name: "Sales & persuasion",
     icon: "target",
     blurb: "Discovery, pitching value, handling objections and closing — then sell out loud.",
-    lessons: ["Discovery: find the real problem first", "Pitching value, not features", "Handling objections calmly", "Closing and asking for the next step", "Selling your own product (Keen or Titan)"],
+    lessons: ["Discovery: find the real problem first", "Pitching value, not features", "Handling objections calmly", "Closing and asking for the next step", "Selling your own product (Keen or Titan)", "Cold outreach that books meetings", "Storytelling in a pitch", "Pricing and how buyers decide"],
     practice: "sales",
   },
   {
@@ -79,6 +79,89 @@ const TRACKS = [
     lessons: ["Pricing your photography", "Finding and keeping clients", "Building a portfolio that sells", "A faster Lightroom workflow", "Contracts, usage rights and getting paid"],
   },
 ];
+// Added in 2026.10: deeper finance tracks and career-skills tracks.
+TRACKS.push(
+  {
+    id: "accounting",
+    name: "Accounting basics",
+    icon: "clipboard",
+    blurb: "The language of business: how the three statements connect — the #1 topic in finance interviews.",
+    lessons: ["Assets, liabilities and equity", "Debits, credits and the accounting equation", "Accrual vs. cash accounting", "Revenue recognition and expenses", "How the three statements link together", "Depreciation and the classic $10 question", "Working capital and why it matters", "Key ratios: margins, ROE and liquidity"],
+  },
+  {
+    id: "valuation",
+    name: "Valuation & DCF",
+    icon: "gauge",
+    blurb: "What is a company worth? Comparables, cash flows, WACC and building a real DCF.",
+    lessons: ["Why valuation matters and the main methods", "Trading comparables (comps)", "Precedent transactions", "Unlevered free cash flow", "Discount rates and WACC", "Terminal value: growth vs. exit multiple", "Building a simple DCF step by step", "Sensitivity tables and what drives value", "Pitching a stock with a valuation"],
+  },
+  {
+    id: "options",
+    name: "Options & derivatives",
+    icon: "layers",
+    blurb: "Calls, puts, payoffs, the Greeks and volatility — and the risks that wipe out beginners.",
+    lessons: ["Calls and puts: payoffs at expiration", "Intrinsic value and time value", "Implied volatility", "The Greeks: delta, gamma, theta, vega", "Covered calls and protective puts", "Spreads: limiting risk", "Futures and forwards basics", "Why most beginners lose money with options"],
+  },
+  {
+    id: "personal",
+    name: "Personal finance",
+    icon: "shield",
+    blurb: "Your own money: paychecks, credit, accounts for teens, investing basics and avoiding traps.",
+    lessons: ["Reading your first paycheck", "Bank accounts and custodial accounts for teens", "Credit scores and how credit works", "A Roth IRA with your own earned income", "Investing your first $1,000: index funds and risk", "Debt traps: credit cards, BNPL and loans", "Taxes on a teen job and side income", "Money goals: budgets that actually stick"],
+  },
+  {
+    id: "econ",
+    name: "Economics & markets",
+    icon: "trend",
+    blurb: "Supply and demand to the Fed: the big forces behind every market headline.",
+    lessons: ["Supply, demand and prices", "GDP, growth and recessions", "Inflation and the CPI report", "The Fed and monetary policy", "Fiscal policy: taxes and government spending", "Jobs reports and unemployment", "Trade, tariffs and currencies", "Reading the economic calendar like a trader"],
+  },
+  {
+    id: "filings",
+    name: "10-Ks & earnings",
+    icon: "file",
+    blurb: "Read company filings and earnings like an analyst: what to look at and what's a red flag.",
+    lessons: ["What's in a 10-K and a 10-Q", "The business section and risk factors", "MD&A: management's story", "Earnings releases and calls", "Guidance, consensus and surprises", "Red flags in financial statements", "Comparing two companies side by side"],
+  },
+  {
+    id: "excel",
+    name: "Excel & spreadsheets",
+    icon: "layers",
+    blurb: "The tool every finance intern uses daily: formulas, lookups, pivots and clean models.",
+    lessons: ["Cells, references and clean formulas", "SUMIFS, COUNTIFS and IF logic", "XLOOKUP and INDEX/MATCH", "Pivot tables", "Charts that make a point", "Financial functions: NPV, IRR, PMT", "Building a clean three-tab model", "Keyboard shortcuts that save hours", "Google Sheets with Python and APIs"],
+  },
+  {
+    id: "speaking",
+    name: "Public speaking",
+    icon: "volume",
+    blurb: "Sound confident: structure, voice, pace, nerves and handling questions — then practice out loud.",
+    lessons: ["Structuring any talk in three parts", "Handling nerves", "Voice, pace and pauses", "Body language and eye contact (on video too)", "Storytelling that sticks", "Presenting numbers and charts", "Handling tough questions", "A practice routine that works"],
+    practice: "interview",
+  },
+  {
+    id: "writing",
+    name: "Professional email & writing",
+    icon: "mail",
+    blurb: "Emails people answer: subject lines, tone, follow-ups, thank-you notes and asking for things.",
+    lessons: ["Subject lines and the first sentence", "Short, clear structure", "Tone: professional but human", "Following up the right way", "Thank-you notes that get remembered", "Asking for a recommendation", "LinkedIn messages and connection notes", "Proofreading and common mistakes"],
+  },
+  {
+    id: "negotiation",
+    name: "Negotiation",
+    icon: "users",
+    blurb: "Get to yes: interests, anchors, alternatives and negotiating for yourself as a teen.",
+    lessons: ["Positions vs. interests", "Your BATNA (walk-away option)", "Anchoring and first offers", "Asking questions to create value", "Negotiating pay or hours at a first job", "Handling no and staying calm", "Negotiating for photography clients"],
+    practice: "sales",
+  },
+  {
+    id: "brand",
+    name: "LinkedIn & personal brand",
+    icon: "award",
+    blurb: "Build a profile, portfolio and online presence that make recruiters want to talk to you.",
+    lessons: ["What recruiters look for online", "A headline and About that work", "Showing projects: portfolio and Featured", "Posting about what you learn", "Connection requests that get accepted", "Messaging recruiters and alumni", "Cleaning up your online presence"],
+  }
+);
+
 const PERSONAS = [
   { id: "fair", who: "an analyst at a mid-size investment firm staffing a booth", setting: "A college & career fair. Mason walks up to the booth.", label: "Analyst at a career-fair booth" },
   { id: "coord", who: "the coordinator of a competitive high-school finance summer program", setting: "A 10-minute phone call Mason scheduled after emailing about the program.", label: "Program coordinator (phone call)" },
@@ -138,70 +221,118 @@ function studyStats() {
   return {
     streak: studyStreak(),
     lessons: Object.keys(s.done).length,
-    total: TRACKS.reduce((n, t) => n + t.lessons.length, 0),
+    total: allTracks().reduce((n, t) => n + t.lessons.length, 0),
+    certs: Object.keys(s.certs || {}).length,
+    cases: (s.cases || []).filter((c) => c.grade).length,
     quizAvg: scores.length ? Math.round(scores.reduce((a, b) => a + b, 0) / scores.length) : null,
     sessions: (s.sessions || []).length,
   };
 }
 const PRACTICE_LINK = { networking: "networking", fp: "fp", interview: "interview", sales: "sales" };
 
+const TRACK_GROUPS = [
+  ["Finance & markets", ["finance", "accounting", "valuation", "filings", "econ", "options", "planning", "personal"]],
+  ["Trading & code", ["quant", "ta", "python", "excel", "ai"]],
+  ["Career skills", ["interview", "networking", "speaking", "writing", "sales", "negotiation", "brand", "photo"]],
+];
+function trackCard(t) {
+  const p = trackProgress(t);
+  const cert = (study().certs || {})[t.id];
+  return `<a class="card track" href="#study/${t.id}">
+    <div class="spread"><div class="track-icon">${icon(t.icon)}</div>${cert ? `<span class="pill good" title="Certificate earned">${icon("award")} ${cert.score}%</span>` : ring(p, { size: 46, tone: p >= 70 ? "good" : "accent" })}</div>
+    <h3>${esc(t.name)}</h3><p class="small muted">${esc(t.blurb)}</p>
+    <div class="small">${t.lessons.length} lessons${t.practice ? " · spoken practice" : ""}${t.custom ? " · made by you" : ""}</div></a>`;
+}
+
 function renderStudy() {
   const st = studyStats();
-  const last = (mode) => (study().sessions || []).find((x) => x.mode === mode);
+  const s = study();
+  const last = (mode) => (s.sessions || []).find((x) => x.mode === mode);
+  const grouped = new Set(TRACK_GROUPS.flatMap(([, ids]) => ids));
+  const custom = s.custom || [];
+  const extra = TRACKS.filter((t) => !grouped.has(t.id));
   app.innerHTML = `
-    <div class="page-head"><div><h1>Study</h1><p class="muted">Short lessons, quizzes and spoken practice — built around your projects and goals.</p></div></div>
+    <div class="page-head"><div><h1>Study</h1><p class="muted">Lessons, quizzes, mock exams, case studies and spoken practice — built around your projects and goals.</p></div>
+      <div class="row"><a class="btn primary" href="#quiz/mix">${icon("sparkles")} Mixed review quiz</a></div></div>
     <div class="stats">
       <div class="card stat"><div class="k">${icon("flame")} Study streak</div><div class="stat-v">${st.streak}<span class="muted"> day${st.streak === 1 ? "" : "s"}</span></div></div>
       <div class="card stat"><div class="k">Lessons done</div><div class="stat-v">${st.lessons}<span class="muted">/${st.total}</span></div></div>
       <div class="card stat"><div class="k">Quiz average</div><div class="stat-v">${st.quizAvg ?? "—"}${st.quizAvg != null ? '<span class="muted">%</span>' : ""}</div></div>
-      <div class="card stat"><div class="k">Practice sessions</div><div class="stat-v">${st.sessions}</div></div>
+      <div class="card stat"><div class="k">Certificates</div><div class="stat-v">${st.certs}</div><div class="small muted">${st.cases} case stud${st.cases === 1 ? "y" : "ies"} graded</div></div>
     </div>
     <section><div class="section-head"><h2>Speak it out loud</h2><a class="small" href="#practice">All practice options</a></div>
       <div class="grid cards2">${MODES.map((m) => {
         const l = last(m.id === "fp" ? "fpclient" : m.id);
         return `<a class="card practice-cta" href="#practice/${m.id}"><div class="track-icon">${icon(m.icon)}</div><div class="grow"><h3>${m.label}</h3><p class="small muted">${l ? `Last score ${l.score}/100` : esc(m.blurb)}</p></div><span class="chev">${icon("chevron")}</span></a>`;
-      }).join("")}</div></section>
-    <section><div class="section-head"><h2>Tracks</h2><span class="small muted">${TRACKS.length} tracks · ${st.total} lessons</span></div>
-    <div class="grid cards2">${TRACKS.map((t) => {
-      const p = trackProgress(t);
-      return `<a class="card track" href="#study/${t.id}">
-        <div class="spread"><div class="track-icon">${icon(t.icon)}</div>${ring(p, { size: 50, tone: p >= 70 ? "good" : "accent" })}</div>
-        <h2>${t.name}</h2><p class="small muted">${t.blurb}</p>
-        <div class="small">${t.lessons.length} lessons · unlimited quizzes${t.practice ? " · spoken practice" : ""}</div></a>`;
-    }).join("")}</div></section>`;
+      }).join("")}
+      <a class="card practice-cta" href="#brand/pitch"><div class="track-icon">${icon("mic")}</div><div class="grow"><h3>Elevator pitch</h3><p class="small muted">Your 30-second “tell me about yourself”, timed and scored.</p></div><span class="chev">${icon("chevron")}</span></a>
+      <a class="card practice-cta" href="#cases"><div class="track-icon">${icon("briefcase")}</div><div class="grow"><h3>Case studies</h3><p class="small muted">Stock pitches, valuations, client plans and strategy cases — graded with model answers.</p></div><span class="chev">${icon("chevron")}</span></a></div></section>
+    ${TRACK_GROUPS.map(([name, ids]) => {
+      const list = ids.map((id) => TRACKS.find((t) => t.id === id)).filter(Boolean);
+      return `<section><div class="section-head"><h2>${name}</h2><span class="small muted">${list.length} tracks · ${list.reduce((n, t) => n + t.lessons.length, 0)} lessons</span></div><div class="grid cards3 tracks">${list.map(trackCard).join("")}</div></section>`;
+    }).join("")}
+    ${extra.length ? `<section><div class="grid cards3 tracks">${extra.map(trackCard).join("")}</div></section>` : ""}
+    <section><div class="section-head"><h2>Your tracks</h2><span class="small muted">Claude builds a full track on anything you want to learn</span></div>
+      <div class="card new-track"><div class="row"><input id="nt-topic" placeholder="e.g. Real estate investing, SAT math, crypto basics, Swift for iOS…" maxlength="80" style="flex:1"><button class="btn primary" id="nt-go">${icon("plus")} Create track</button></div></div>
+      ${custom.length ? `<div class="grid cards3 tracks mt-s">${custom.map(trackCard).join("")}</div>` : ""}</section>`;
+  document.getElementById("nt-go").onclick = (e) =>
+    busy(e.currentTarget, async () => {
+      const topic = document.getElementById("nt-topic").value.trim();
+      if (topic.length < 3) throw new Error("Type a topic first.");
+      if (!AI.enabled()) throw new Error("Add your Claude API key in Settings first.");
+      const t = await createTrack(topic);
+      toast(`Created “${t.name}” — ${t.lessons.length} lessons.`);
+      go("study/" + t.id);
+    });
+  document.getElementById("nt-topic").addEventListener("keydown", (e) => e.key === "Enter" && document.getElementById("nt-go").click());
 }
 
 function renderTrack(id) {
-  const t = TRACKS.find((x) => x.id === id);
-  if (!t) return (app.innerHTML = empty(`Track not found. <a href="#study">Back</a>`));
+  const t = findTrack(id);
+  if (!t || t.virtual) return (app.innerHTML = empty(`Track not found. <a href="#study">Back</a>`));
   const s = study();
   const qz = (s.quizzes || []).filter((q) => q.track === t.id);
+  const cert = (s.certs || {})[t.id];
+  const exams = (s.exams || []).filter((e) => e.track === t.id);
   app.innerHTML = `
     <a class="back" href="#study">‹ Study</a>
-    <div class="page-head"><div><div class="eyebrow">Track</div><h1>${t.name}</h1><p class="muted">${t.blurb}</p></div>${ring(trackProgress(t), { size: 84, tone: "accent" })}</div>
+    <div class="page-head"><div><div class="eyebrow">${t.custom ? "Your track" : "Track"}</div><h1>${esc(t.name)}</h1><p class="muted">${esc(t.blurb)}</p></div>${ring(trackProgress(t), { size: 84, tone: "accent" })}</div>
     <div class="row">
       <a class="btn primary" href="#quiz/${t.id}">${icon("sparkles")} Practice quiz</a>
+      <a class="btn" href="#exam/${t.id}">${icon("award")} ${cert ? "Certificate · " + cert.score + "%" : "Mock exam & certificate"}</a>
       ${t.practice ? `<a class="btn" href="#practice/${PRACTICE_LINK[t.practice]}">${icon("mic")} Practice out loud</a>` : ""}
-      ${qz.length ? `<span class="small muted">Best quiz: ${Math.max(...qz.map((q) => Math.round((q.score / q.of) * 100)))}% · ${qz.length} taken</span>` : ""}
+      ${t.custom ? `<button class="btn ghost" id="tr-del">${icon("trash")} Delete track</button>` : ""}
     </div>
+    ${qz.length || exams.length ? `<p class="small muted">${qz.length ? `Best quiz ${Math.max(...qz.map((q) => Math.round((q.score / q.of) * 100)))}% · ${qz.length} taken` : ""}${qz.length && exams.length ? " · " : ""}${exams.length ? `Best exam ${Math.max(...exams.map((e) => e.pct))}% · ${exams.length} attempt${exams.length === 1 ? "" : "s"}` : ""}</p>` : ""}
     <div class="list">${t.lessons
       .map((title, i) => {
         const d = s.done[lessonKey(t.id, i)];
         return `<a class="list-row card" href="#lesson/${t.id}/${i}"><div class="lesson-num ${d ? "done" : ""}">${d ? icon("check") : i + 1}</div><div class="grow"><div class="row-title">${esc(title)}</div><div class="small muted">${d ? `Quiz ${d.score}/${d.of || 3}` : s.lessons[lessonKey(t.id, i)] ? "Ready to read" : "~5 min"}</div></div><span class="chev">${icon("chevron")}</span></a>`;
       })
       .join("")}</div>`;
+  document.getElementById("tr-del")?.addEventListener("click", () => {
+    if (!confirm(`Delete the “${t.name}” track? Finished-lesson progress for it is removed too.`)) return;
+    deleteTrack(t.id);
+    toast("Track deleted.");
+    go("study");
+  });
 }
 
 // Unlimited practice quizzes: fresh AI questions each time, weighted toward lessons you've finished.
 let QZ = null;
 function renderQuiz(id) {
-  const t = TRACKS.find((x) => x.id === id);
+  const t = findTrack(id);
   if (!t) return (app.innerHTML = empty(`Track not found. <a href="#study">Back</a>`));
-  if (!QZ || QZ.track !== id) QZ = { track: id, qs: null };
+  if (!QZ || QZ.track !== id) QZ = { track: id, qs: null, n: QZ?.n || 6, level: QZ?.level || "mixed" };
+  const backHref = t.virtual ? "#study" : `#study/${t.id}`;
   app.innerHTML = `
-    <a class="back" href="#study/${t.id}">‹ ${t.name}</a>
+    <a class="back" href="${backHref}">‹ ${t.virtual ? "Study" : esc(t.name)}</a>
     <article class="card lesson">
-      <div class="eyebrow">Practice quiz · ${t.name}</div><h1>Test yourself</h1>
+      <div class="eyebrow">Practice quiz · ${esc(t.name)}</div><h1>Test yourself</h1>
+      <div class="quiz-opts row">
+        <div class="segmented" id="qz-n">${[6, 10, 15].map((n) => `<button data-n="${n}" class="${QZ.n === n ? "on" : ""}">${n} questions</button>`).join("")}</div>
+        <div class="segmented" id="qz-l">${[["easier", "Easier"], ["mixed", "Mixed"], ["harder", "Harder"]].map(([v, l]) => `<button data-l="${v}" class="${QZ.level === v ? "on" : ""}">${l}</button>`).join("")}</div>
+      </div>
       <div id="quiz-body">${AI.enabled() ? `<div class="skeleton"><span class="spinner"></span> Writing fresh questions…</div>` : `<p class="muted">Quizzes are written by Claude — add your API key in <a href="#settings">Settings</a>.</p>`}</div>
     </article>`;
   if (!AI.enabled()) return;
@@ -210,7 +341,7 @@ function renderQuiz(id) {
     if (!body) return;
     body.innerHTML = `${QZ.qs
       .map((q, qi) => `<div class="quiz-q"><p><strong>${qi + 1}. ${esc(q.q)}</strong></p>${q.options.map((o, oi) => `<button class="quiz-opt" data-qi="${qi}" data-oi="${oi}">${esc(o)}</button>`).join("")}<div class="small quiz-why"></div></div>`)
-      .join("")}<div class="row mt"><button class="btn primary" id="quiz-new">${icon("refresh")} New questions</button><a class="btn" href="#study/${t.id}">Back to track</a></div>`;
+      .join("")}<div class="row mt"><button class="btn primary" id="quiz-new">${icon("refresh")} New questions</button><a class="btn" href="${backHref}">Back</a></div>`;
     wireQuiz(QZ.qs, (score) => {
       const s = study();
       s.quizzes = [{ track: t.id, score, of: QZ.qs.length, at: Date.now() }, ...(s.quizzes || [])].slice(0, 100);
@@ -218,15 +349,27 @@ function renderQuiz(id) {
       toast(`Quiz done — ${score}/${QZ.qs.length}.`);
     });
     document.getElementById("quiz-new").onclick = () => {
-      QZ = null;
+      QZ.qs = null;
       route();
     };
     Motion.reveal(body);
   };
+  const reset = (patch) => {
+    Object.assign(QZ, patch, { qs: null });
+    route.quiet = true;
+    route();
+  };
+  app.querySelectorAll("#qz-n [data-n]").forEach((b) => (b.onclick = () => reset({ n: +b.dataset.n })));
+  app.querySelectorAll("#qz-l [data-l]").forEach((b) => (b.onclick = () => reset({ level: b.dataset.l })));
   if (QZ.qs) return draw();
-  const done = t.lessons.filter((_, i) => study().done[lessonKey(t.id, i)]);
-  AI.quiz(t, done.length ? done : t.lessons)
+  const done = t.virtual ? t.lessons : t.lessons.filter((_, i) => study().done[lessonKey(t.id, i)]);
+  const pool = done.length ? done : t.lessons;
+  // Mixed review samples up to 12 finished lessons so the prompt stays focused.
+  const pick = pool.length > 12 ? [...pool].sort(() => Math.random() - 0.5).slice(0, 12) : pool;
+  const want = { ...QZ };
+  AI.quiz(t, pick, want.n, want.level)
     .then((qs) => {
+      if (QZ.track !== want.track || QZ.n !== want.n || QZ.level !== want.level) return; // settings changed meanwhile
       QZ.qs = qs;
       if (location.hash === `#quiz/${t.id}`) draw();
     })
@@ -235,7 +378,7 @@ function renderQuiz(id) {
       if (!body) return;
       body.innerHTML = `<p class="bad-text">${esc(e.message)}</p><button class="btn" id="quiz-retry">Try again</button>`;
       document.getElementById("quiz-retry").onclick = () => {
-        QZ = null;
+        QZ.qs = null;
         route();
       };
     });
@@ -264,9 +407,9 @@ function wireQuiz(quiz, onDone) {
 }
 function renderLesson(arg) {
   const [tid, idxStr] = arg.split("/");
-  const t = TRACKS.find((x) => x.id === tid);
+  const t = findTrack(tid);
   const i = +idxStr;
-  if (!t || !t.lessons[i]) return (app.innerHTML = empty(`Lesson not found. <a href="#study">Back</a>`));
+  if (!t || t.virtual || !t.lessons[i]) return (app.innerHTML = empty(`Lesson not found. <a href="#study">Back</a>`));
   const key = lessonKey(t.id, i);
   const s = study();
   const L = s.lessons[key];
@@ -330,222 +473,6 @@ function wireLesson(L, key) {
     saveStudy(s);
     toast(`Lesson complete — ${score}/${L.quiz.length} on the quiz.`);
   });
-}
-
-// ---------- networking role-play ----------
-let rp = null;
-function renderRoleplay() {
-  const s = study();
-  if (!rp)
-    return (app.innerHTML = `
-      <a class="back" href="#study/networking">‹ Networking</a>
-      <div class="page-head"><div><h1>Practice a conversation</h1><p class="muted">Claude plays a real person. Introduce yourself and keep the conversation going — you'll get a tip after every message and a score at the end.</p></div></div>
-      ${AI.enabled() ? "" : `<div class="notice info">Needs your Claude API key — add it in <a href="#settings">Settings</a>.</div>`}
-      <div class="grid cards2">${PERSONAS.map((p) => `<button class="card clickable persona" data-persona="${p.id}"><h3>${p.label}</h3><p class="small muted">${esc(p.setting)}</p></button>`).join("")}</div>
-      ${s.roleplays.length ? `<section class="card"><h2>Recent practice</h2>${s.roleplays.slice(0, 5).map((r) => `<div class="kv"><span>${esc(r.label)} · ${new Date(r.at).toLocaleDateString()}</span><strong>${r.score}/10</strong></div>`).join("")}</section>` : ""}`,
-    app.querySelectorAll("[data-persona]").forEach((b) =>
-      b.addEventListener("click", () => {
-        if (!AI.enabled()) return toast("Add your API key in Settings first.");
-        rp = { persona: PERSONAS.find((p) => p.id === b.dataset.persona), thread: [], tips: {}, feedback: null };
-        renderRoleplay();
-      })
-    ));
-
-  const { persona, thread, tips, feedback } = rp;
-  app.innerHTML = `
-    <a class="back" href="#roleplay" id="rp-exit">‹ Choose someone else</a>
-    <div class="coach">
-      <aside class="card coach-side">
-        <div class="track-icon big">${icon("message")}</div><h2>${esc(persona.label)}</h2>
-        <p class="small muted">${esc(persona.setting)}</p>
-        <div class="callout small"><strong>Goal</strong><p>Introduce yourself, show genuine curiosity, and end with one small, specific ask (a tip, a follow-up, an email).</p></div>
-        ${thread.length >= 4 && !feedback ? `<button class="btn primary block" id="rp-finish">Finish & get feedback</button>` : ""}
-        ${
-          feedback
-            ? `<div class="rp-score">${ring(feedback.score * 10, { size: 96, label: feedback.score + "/10", tone: feedback.score >= 7 ? "good" : "accent" })}</div>
-               <p><strong>${esc(feedback.verdict)}</strong></p>
-               <h4>What worked</h4><ul class="small">${feedback.strengths.map((x) => `<li>${esc(x)}</li>`).join("")}</ul>
-               <h4>Try next time</h4><ul class="small">${feedback.fixes.map((x) => `<li>${esc(x)}</li>`).join("")}</ul>
-               ${feedback.betterLine ? `<div class="callout small"><strong>Stronger line</strong><p>${esc(feedback.betterLine)}</p></div>` : ""}
-               <button class="btn block" id="rp-again">Practice again</button>`
-            : ""
-        }
-      </aside>
-      <section class="card chat">
-        <div class="thread" id="thread">
-          <div class="msg system">${esc(persona.setting)} You start.</div>
-          ${thread.map((m, i) => `<div class="msg ${m.from === "me" ? "me" : "coach"}">${esc(m.text)}</div>${tips[i] ? `<div class="tip">${icon("bulb")}${esc(tips[i])}</div>` : ""}`).join("")}
-        </div>
-        ${feedback ? "" : `<div class="composer"><textarea id="answer" placeholder="${thread.length ? "Your reply…" : "Hi! I'm Mason, a sophomore at Canyon Crest…"}"></textarea><div class="row"><button class="btn primary" id="send">Send</button>${Speech ? `<button class="btn ghost small" id="mic" aria-label="Dictate">${icon("mic")}</button>` : ""}</div></div>`}
-      </section>
-    </div>`;
-  const th = document.getElementById("thread");
-  th.scrollTop = th.scrollHeight;
-  document.getElementById("rp-exit").addEventListener("click", () => (rp = null));
-  document.getElementById("rp-again")?.addEventListener("click", () => {
-    rp = { persona, thread: [], tips: {}, feedback: null };
-    renderRoleplay();
-  });
-  const ta = document.getElementById("answer");
-  document.getElementById("mic")?.addEventListener("click", (e) => dictate(ta, e.currentTarget));
-  ta?.addEventListener("keydown", (e) => {
-    if (e.key === "Enter" && !e.shiftKey) {
-      e.preventDefault();
-      document.getElementById("send").click();
-    }
-  });
-  document.getElementById("send")?.addEventListener("click", (e) =>
-    busy(e.currentTarget, async () => {
-      const text = ta.value.trim();
-      if (!text) return;
-      thread.push({ from: "me", text });
-      renderRoleplay();
-      const r = await AI.roleplayTurn(persona, thread);
-      tips[thread.length - 1] = r.tip;
-      thread.push({ from: "them", text: r.reply });
-      renderRoleplay();
-      document.getElementById("answer")?.focus();
-    })
-  );
-  document.getElementById("rp-finish")?.addEventListener("click", (e) =>
-    busy(e.currentTarget, async () => {
-      rp.feedback = await AI.roleplayFeedback(persona, thread);
-      const s = study();
-      s.roleplays.unshift({ label: persona.label, score: rp.feedback.score, at: Date.now() });
-      s.roleplays = s.roleplays.slice(0, 20);
-      saveStudy(s);
-      renderRoleplay();
-    })
-  );
-}
-
-// ---------- voice mock interview ----------
-let mock = null;
-function mockQuestions(roleId) {
-  const found = roleId && findRole(roleId);
-  const role = found ? { ...found.r, org: found.r.org || found.c.name } : { category: "finance", keywords: TYPICAL_KEYWORDS.finance, title: "Finance internship", org: "General" };
-  const resume = buildResume(role, getBank(), getSettings());
-  return { role, qs: [{ type: "Opener", q: "Tell me about yourself.", points: PROFILE.summary }, ...interviewQuestions(role, resume)] };
-}
-function speak(text) {
-  try {
-    if (!("speechSynthesis" in window)) return;
-    speechSynthesis.cancel();
-    const u = new SpeechSynthesisUtterance(text);
-    u.rate = 1;
-    speechSynthesis.speak(u);
-  } catch {}
-}
-
-function renderMock() {
-  if (!mock) {
-    const tracked = Object.entries(tracker())
-      .map(([id]) => findRole(id))
-      .filter(Boolean);
-    app.innerHTML = `
-      <a class="back" href="#study/interview">‹ Interviewing</a>
-      <div class="page-head"><div><h1>Voice mock interview</h1><p class="muted">4 questions. Each one is read aloud; answer out loud (or type), then get scored. Aim for 1–2 minutes per answer.</p></div></div>
-      ${Speech ? "" : `<div class="notice info">Voice input isn't supported in this browser — you can type your answers instead. (Chrome, Edge and Safari support voice.)</div>`}
-      ${AI.enabled() ? "" : `<div class="notice info">Scoring needs your Claude API key — add it in <a href="#settings">Settings</a>.</div>`}
-      <div class="card"><label class="field"><span>Interview for</span><select id="mock-role">
-        <option value="">General finance internship</option>
-        ${tracked.map(({ r, c }) => `<option value="${r.id}">${esc((r.org || c.name) + " — " + r.title)}</option>`).join("")}
-      </select></label>
-      <button class="btn primary" id="mock-start">Start interview</button></div>
-      ${study().mocks.length ? `<section class="card"><h2>Past interviews</h2>${study().mocks.slice(0, 5).map((m) => `<div class="kv"><span>${esc(m.label)} · ${new Date(m.at).toLocaleDateString()}</span><strong>${m.avg}/10</strong></div>`).join("")}</section>` : ""}`;
-    document.getElementById("mock-start").addEventListener("click", () => {
-      const { role, qs } = mockQuestions(document.getElementById("mock-role").value);
-      mock = { role, qs, i: 0, results: [], phase: "ask", transcript: "", started: 0 };
-      renderMock();
-    });
-    return;
-  }
-
-  const { qs, i, results } = mock;
-  if (i >= qs.length) {
-    const scored = results.filter((r) => r.score);
-    const avg = scored.length ? Math.round((scored.reduce((n, r) => n + r.score, 0) / scored.length) * 10) / 10 : 0;
-    if (!mock.saved && scored.length) {
-      const s = study();
-      s.mocks.unshift({ label: mock.role.org === "General" ? "General finance" : mock.role.org, avg, at: Date.now() });
-      s.mocks = s.mocks.slice(0, 20);
-      saveStudy(s);
-      mock.saved = true;
-    }
-    app.innerHTML = `
-      <div class="card mock-done">
-        ${ring(avg * 10, { size: 120, label: avg + "/10", tone: avg >= 7 ? "good" : "accent" })}
-        <h1>Interview complete</h1><p class="muted">${esc(mock.role.org === "General" ? "General finance internship" : mock.role.org + " — " + mock.role.title)}</p>
-      </div>
-      ${results.map((r, k) => `<section class="card"><div class="spread"><h3>${esc(qs[k].q)}</h3><strong>${r.score ? r.score + "/10" : "—"}</strong></div><p class="small muted">${r.seconds}s · ${r.words} words</p><details><summary>Your answer & feedback</summary><p class="small">${esc(r.answer)}</p><div class="ai-out">${esc(r.feedback || "")}</div></details></section>`).join("")}
-      <div class="row"><button class="btn primary" id="mock-again">New interview</button><a class="btn" href="#study">Back to Study</a></div>`;
-    document.getElementById("mock-again").addEventListener("click", () => {
-      mock = null;
-      renderMock();
-    });
-    return;
-  }
-
-  const q = qs[i];
-  app.innerHTML = `
-    <div class="mock-top"><span class="pill">Question ${i + 1} of ${qs.length}</span><button class="linkbtn small" id="mock-quit">End interview</button></div>
-    <div class="card mock-card">
-      <span class="pill">${esc(q.type)}</span>
-      <h1 class="mock-q">${esc(q.q)}</h1>
-      <div class="mock-timer" id="mock-timer">0:00</div>
-      <textarea id="mock-text" placeholder="${Speech ? "Tap the mic and answer out loud — your words appear here. You can also type." : "Type your answer…"}">${esc(mock.transcript)}</textarea>
-      <div class="row center">
-        ${Speech ? `<button class="btn mic-btn" id="mock-mic">${icon("mic")} Start answering</button>` : ""}
-        <button class="btn primary" id="mock-submit">Submit answer</button>
-        <button class="btn ghost small" id="mock-repeat">${icon("volume")} Repeat question</button>
-      </div>
-      <details><summary class="small">Talking points from your data</summary><ul class="small">${q.points.map((p) => `<li>${esc(p)}</li>`).join("")}</ul></details>
-      <div id="mock-out"></div>
-    </div>`;
-  speak(q.q);
-  const ta = document.getElementById("mock-text");
-  const timerEl = document.getElementById("mock-timer");
-  mock.started = Date.now();
-  clearInterval(renderMock._t);
-  renderMock._t = setInterval(() => {
-    if (!document.getElementById("mock-timer")) return clearInterval(renderMock._t);
-    const s = Math.floor((Date.now() - mock.started) / 1000);
-    timerEl.textContent = `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`;
-    timerEl.classList.toggle("long", s > 150);
-  }, 500);
-  document.getElementById("mock-repeat").addEventListener("click", () => speak(q.q));
-  document.getElementById("mock-quit").addEventListener("click", () => {
-    if (dictate.rec) dictate.rec.stop();
-    mock.i = qs.length;
-    renderMock();
-  });
-  document.getElementById("mock-mic")?.addEventListener("click", (e) => {
-    e.currentTarget.classList.toggle("live", !dictate.rec);
-    dictate(ta, e.currentTarget);
-  });
-  document.getElementById("mock-submit").addEventListener("click", (e) =>
-    busy(e.currentTarget, async () => {
-      if (dictate.rec) dictate.rec.stop();
-      const answer = ta.value.trim();
-      if (!answer) return toast("Answer out loud or type something first.");
-      const seconds = Math.round((Date.now() - mock.started) / 1000);
-      const words = answer.split(/\s+/).length;
-      let feedback = "";
-      let score = 0;
-      if (AI.enabled()) {
-        feedback = await AI.scoreAnswer(q.q, answer);
-        score = +((feedback.match(/(\d+(?:\.\d)?)\s*\/\s*10/) || [])[1] || 0);
-      }
-      results.push({ answer, seconds, words, feedback, score });
-      document.getElementById("mock-out").innerHTML = `<div class="ai-out">${esc(feedback || "Add an API key in Settings for scored feedback.")}</div><button class="btn primary block" id="mock-next">${mock.i + 1 < qs.length ? "Next question ›" : "See results"}</button>`;
-      document.getElementById("mock-submit").disabled = true;
-      document.getElementById("mock-next").addEventListener("click", () => {
-        mock.i++;
-        mock.transcript = "";
-        renderMock();
-      });
-    })
-  );
 }
 
 // =============== COLLEGE PROFILE ===============

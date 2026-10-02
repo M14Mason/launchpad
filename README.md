@@ -10,7 +10,11 @@ An internship, college, and resume app built only from verified facts.
 
 Sources for acceptance rates and program data are listed at the top of `js/internships.js` and `js/colleges.js`.
 
-- **Study**: AI lessons and quizzes for Networking, Python, Technical Analysis, and Interviewing. Includes networking role-play with a tip after every message, and voice mock interviews that are timed, transcribed, and scored.
+- **Study**: 21 tracks and 180+ AI lessons across finance and markets (accounting, valuation/DCF, options, economics, 10-Ks, personal finance, financial planning), trading and code, and career skills (Excel, public speaking, email, negotiation, LinkedIn). Unlimited quizzes (6, 10, or 15 questions at three levels), a mixed-review quiz, 20-question mock exams with printable certificates (80% to pass), graded case studies with model answers, and custom tracks that Claude builds on any topic.
+- **Spoken practice**: interview, financial planning (as planner or candidate), sales, and networking. Hands-free on PC and Mac. On iPhone, tap the mic once per turn (Apple's rule) and it sends when you pause. Optional ElevenLabs voices sound human. Every session is saved with a replay, a full analysis, and a progress chart.
+- **Markets**: a daily brief of 3 market stories with concepts, interview talking points, and a quiz. Includes a $10,000 paper-trading simulator with real prices (Finnhub or Claude web search for stocks, Coinbase for crypto), a trade journal, and an AI review of your process. It is for education only.
+- **Pitch & LinkedIn**: a 30- or 60-second elevator pitch built from verified data, then timed and scored out loud. A LinkedIn optimizer writes your headline, About section, experience, skills, post ideas, and message templates, and fact-checks every number.
+- **Reminders**: "Heads up" alerts for deadlines within 2 weeks and applications that open soon, a home-screen badge, and one-tap calendar export.
 - **Tracker**: application status for each program, exact deadlines, and calendar reminders.
 - **Application writing and outreach**: essays, cover letters, and networking emails drafted only from verified data. Every number is fact-checked, and missing details become [bracketed] notes for you to fill in.
 - **College profile**: courses, test scores, activities, leadership, and awards, which feed into your college chances.

@@ -383,7 +383,7 @@ function applyRewrites(resume, map) {
 function numbersNotIn(text, source) {
   const norm = (s) => s.replace(/,/g, "");
   const src = norm(source);
-  return [...new Set(norm(text).match(/\d+(\.\d+)?/g) || [])].filter((n) => !new RegExp("(?<![\d.])" + n.replace(".", "\.") + "(?![\d])").test(src));
+  return [...new Set(norm(text).match(/\d+(\.\d+)?/g) || [])].filter((n) => !new RegExp("(?<![\\d.])" + n.replace(".", "\\.") + "(?![\\d])").test(src));
 }
 
 // Descriptive terms a rewrite may add when the role asks for them (they describe work already in the data).

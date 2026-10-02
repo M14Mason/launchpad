@@ -380,7 +380,7 @@ Object.assign(AI, {
       `Create a spoken role-play scenario. ${spec}
 Difficulty: ${opts.difficulty} — ${DIFFICULTY_NOTE[opts.difficulty]}
 Return ONLY JSON:
-{"title": str, "counterpart": {"name": realistic first+last name, "role": str},
+{"title": str, "counterpart": {"name": realistic first+last name, "role": str, "gender": "female" or "male"},
  "brief": "2 sentences shown to Mason before starting (what he knows; never reveal hidden details)",
  "opening": "your first spoken line in character, or empty string if Mason should speak first",
  "hidden": "private notes only you see: situation, goals, objections, question plan",
@@ -398,7 +398,7 @@ Return ONLY JSON:
       `ROLE-PLAY (spoken). You are ${sc.counterpart.name}, ${sc.counterpart.role}. Scenario: ${sc.title}.
 Private notes: ${sc.hidden}
 Difficulty: ${difficulty} — ${DIFFICULTY_NOTE[difficulty]}
-Rules: stay fully in character; this is spoken aloud, so 1-3 short natural sentences, no lists, no markdown, no emojis, no stage directions. React to what Mason actually said (if he's vague, press; if he asks a good question, answer with real detail). Never coach him. ${mine >= sc.maxTurns ? "Time is up: give a natural closing line now." : "When the conversation reaches a natural end, give a closing line."}
+Rules: stay fully in character. This is spoken aloud by a realistic voice, so sound like a real person talking, not writing: 1-3 short sentences, contractions, plain everyday words, a natural acknowledgment when it fits ("Got it.", "Okay, that's interesting.", "Hmm, fair."), varied sentence length, one question at a time. No lists, no markdown, no emojis, no stage directions, no "As an interviewer". React to what Mason actually said (if he's vague, press; if he asks a good question, answer with real detail). Never coach him. ${mine >= sc.maxTurns ? "Time is up: give a natural closing line now." : "When the conversation reaches a natural end, give a closing line."}
 Transcript:
 ${thread.map((t) => `${t.from === "me" ? "Mason" : sc.counterpart.name}: ${t.text}`).join("\n")}
 Return ONLY JSON: {"reply": "what you say next", "end": true/false}`,
@@ -439,17 +439,3 @@ Return ONLY JSON:
   },
 });
 
-Object.assign(AI, {
-  // Fresh practice-quiz questions for a track (different every time).
-  async quiz(track, lessons) {
-    const text = await this.ask(
-      `Write a fresh 6-question multiple-choice practice quiz for Mason on "${track.name}", covering: ${lessons.join("; ")}.
-Mix: 2 concept checks, 2 applied scenarios, 1 tied to his real projects (trading bot, Keen, Titan, photography) where it fits, 1 harder stretch question. Accurate, unambiguous, one correct answer, plausible distractors. Vary the question wording each time (seed ${Math.random().toString(36).slice(2, 7)}).
-Return ONLY JSON: [{"q": str, "options": [4 strings], "answer": 0-3, "why": "one-sentence explanation"}]`,
-      { effort: "low", maxTokens: 5000 }
-    );
-    const qs = this.parseJSON(text, null);
-    if (!Array.isArray(qs) || !qs.length || !qs.every((q) => q.q && Array.isArray(q.options) && q.options.length === 4 && Number.isInteger(q.answer))) throw new Error("The quiz came back in an unexpected format — try again.");
-    return qs;
-  },
-});

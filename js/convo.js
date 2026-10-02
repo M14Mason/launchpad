@@ -92,7 +92,8 @@ function renderPracticeSetup() {
       </section>
       <section class="card">${micCheckHTML()}</section>
     </div>
-    ${hist.length ? `<section class="card"><h2>Recent sessions</h2><div class="list compact">${hist.map((s) => `<div class="list-row">${ring(s.score, { size: 40 })}<div class="grow"><div class="row-title">${esc(s.label)}</div><div class="small muted">${new Date(s.at).toLocaleDateString()} · ${LEVEL_LABEL[s.difficulty] || ""}</div></div></div>`).join("")}</div></section>` : ""}`;
+    ${progressCardHTML()}
+    ${hist.length ? `<section class="card"><h2>Recent sessions</h2><div class="list compact">${hist.map((s, i) => `<a class="list-row" href="${sessionHref(s, i)}">${ring(s.score, { size: 40 })}<div class="grow"><div class="row-title">${esc(s.label)}</div><div class="small muted">${new Date(s.at).toLocaleDateString()} · ${LEVEL_LABEL[s.difficulty] || ""}${s.thread ? " · replay" : ""}</div></div><span class="chev">${icon("chevron")}</span></a>`).join("")}</div></section>` : ""}`;
 
   const set = (patch) => {
     Object.assign(P.opts, patch);
@@ -115,21 +116,71 @@ function micCheckHTML() {
     <label class="field"><span>Microphone</span><div class="row"><select id="mc-mic" style="flex:1"><option value="">Default microphone</option></select><button class="btn small" id="mc-test">${icon("mic")} Check mic</button></div></label>
     <div class="meter"><i id="mc-level"></i></div>
     <p class="small muted" id="mc-note">${IS_IOS ? "iPhone: uses the built-in mic (or AirPods). Allow microphone access when asked." : "Blue Snowball: set it as your default input (Windows: Settings → System → Sound → Input; Mac: System Settings → Sound → Input) and pick it here. Speech recognition uses your browser's selected mic."}</p>
-    <label class="field"><span>Voice</span><div class="row"><select id="mc-voice" style="flex:1"><option>Loading voices…</option></select><button class="btn small" id="mc-say">${icon("volume")} Test</button></div></label>
-    <p class="small muted">${IS_IOS ? "For the most human voice: iPhone Settings → Accessibility → Spoken Content → Voices → English → download a “Premium” or “Enhanced” voice (e.g. Ava or Zoe), then pick it here." : "Most human voices: Microsoft Edge's “Natural” voices or Chrome's “Google” voices. On a Mac, download a Premium voice in System Settings → Accessibility → Spoken Content."}</p>`;
+    <div class="row"><button class="btn small" id="mc-stt">${icon("message")} Test speech-to-text</button><span class="small muted grow" id="mc-stt-out">Say a sentence — your words should appear here.</span></div>
+    <label class="field"><span>Voice ${Eleven.enabled() ? `<span class="pill">ElevenLabs</span>` : ""}</span><div class="row"><select id="mc-voice" style="flex:1"><option>Loading voices…</option></select><button class="btn small" id="mc-say">${icon("volume")} Test</button></div></label>
+    <label class="field"><span>Speaking speed</span><div class="segmented" id="mc-rate">${[0.9, 1, 1.1, 1.2].map((r) => `<button data-rate="${r}" class="${(getSettings().voiceRate || 1) === r ? "on" : ""}">${r === 1 ? "Normal" : r + "×"}</button>`).join("")}</div></label>
+    <p class="small muted">${
+      Eleven.enabled()
+        ? "Using ElevenLabs human voices. “Auto” gives each character a voice that fits them."
+        : `For a truly human voice, add a free ElevenLabs key in <a href="#settings">Settings</a>. ${IS_IOS ? "Or download a “Premium” voice: iPhone Settings → Accessibility → Spoken Content → Voices → English." : "Otherwise Edge “Natural” and Chrome “Google” voices sound best."}`
+    }</p>`;
 }
 function wireMicCheck() {
   const sel = document.getElementById("mc-voice");
   if (!sel) return;
-  Voice.list().then((list) => {
-    const cur = getSettings().voiceURI;
-    const best = list[0];
-    sel.innerHTML = list.length
-      ? list.slice(0, 30).map((v) => `<option value="${esc(v.voiceURI)}" ${v.voiceURI === (cur || best?.voiceURI) ? "selected" : ""}>${esc(v.name)} — ${Voice.quality(v)}</option>`).join("")
-      : `<option value="">No voices available</option>`;
+  const eleven = Eleven.enabled();
+  const deviceVoices = () =>
+    Voice.list().then((list) => {
+      sel.dataset.kind = "device";
+      const cur = getSettings().voiceURI;
+      sel.innerHTML = list.length
+        ? list.slice(0, 30).map((v) => `<option value="${esc(v.voiceURI)}" ${v.voiceURI === (cur || list[0]?.voiceURI) ? "selected" : ""}>${esc(v.name)} — ${Voice.quality(v)}</option>`).join("")
+        : `<option value="">No voices available</option>`;
+    });
+  if (eleven)
+    Eleven.voices()
+      .then((list) => {
+        sel.dataset.kind = "eleven";
+        const cur = getSettings().elevenVoice || "auto";
+        sel.innerHTML = `<option value="auto">Auto — fits each character</option>` + list.map((v) => `<option value="${esc(v.id)}" ${v.id === cur ? "selected" : ""}>${esc(v.name)}${v.gender || v.accent ? ` — ${esc([v.gender, v.accent].filter(Boolean).join(", "))}` : ""}</option>`).join("");
+      })
+      .catch((e) => {
+        toast(e.message);
+        deviceVoices();
+      });
+  else deviceVoices();
+  sel.addEventListener("change", () => Store.set("settings", { ...getSettings(), [sel.dataset.kind === "eleven" ? "elevenVoice" : "voiceURI"]: sel.value }));
+  document.getElementById("mc-say").addEventListener("click", () => {
+    Voice.unlock();
+    Voice.speak("Hi Mason, thanks for coming in today. So, tell me a little about yourself — what got you into finance?", { gender: "female", seed: "test" });
   });
-  sel.addEventListener("change", () => Store.set("settings", { ...getSettings(), voiceURI: sel.value }));
-  document.getElementById("mc-say").addEventListener("click", () => Voice.speak("Hi Mason, thanks for coming in today. Tell me a little about yourself and what got you interested in finance."));
+  document.querySelectorAll("#mc-rate [data-rate]").forEach((b) =>
+    b.addEventListener("click", () => {
+      Store.set("settings", { ...getSettings(), voiceRate: +b.dataset.rate });
+      document.querySelectorAll("#mc-rate button").forEach((x) => x.classList.toggle("on", x === b));
+    })
+  );
+  // One-turn speech-to-text test: shows exactly what the browser hears (useful on iPhone).
+  document.getElementById("mc-stt").addEventListener("click", (e) => {
+    const out = document.getElementById("mc-stt-out");
+    if (!SR) return (out.textContent = "This browser can't do speech-to-text — use Safari on iPhone, or Chrome/Edge on PC/Mac.");
+    if (wireMicCheck.l?.active) return wireMicCheck.l.flush();
+    Voice.cancel();
+    e.currentTarget.innerHTML = `${icon("stop")} Stop`;
+    const btn = e.currentTarget;
+    const reset = () => (btn.innerHTML = `${icon("message")} Test speech-to-text`);
+    wireMicCheck.l = new Listener({
+      silenceMs: 1800,
+      onText: (t) => (out.textContent = t),
+      onTurn: (t) => ((out.textContent = "Heard: “" + t + "” ✓"), reset()),
+      onState: (st, err) => {
+        if (st === "listening") out.textContent = "Listening… say a sentence.";
+        if (st === "needs-tap") (out.textContent = out.textContent.startsWith("Heard") ? out.textContent : "Didn't catch anything — tap and try again."), reset();
+        if (st === "error") (out.textContent = err === "not-allowed" || err === "service-not-allowed" ? "Blocked — allow the microphone and speech recognition for this site in your browser/phone settings." : "Mic error: " + err), reset();
+      },
+    });
+    wireMicCheck.l.start();
+  });
   const micSel = document.getElementById("mc-mic");
   const fill = async () => {
     const ds = await Mic.devices();
@@ -173,12 +224,8 @@ function practiceLabel() {
 }
 
 async function startPractice(btn, adaptive) {
-  // Unlock speech on iOS/Safari inside the tap.
-  try {
-    const u = new SpeechSynthesisUtterance(" ");
-    u.volume = 0;
-    speechSynthesis.speak(u);
-  } catch {}
+  // Unlock speech + audio on iOS/Safari inside the tap.
+  Voice.unlock();
   const kind = practiceKind();
   const o = P.opts;
   const difficulty = o.difficulty === "adaptive" ? adaptive : o.difficulty;
@@ -196,10 +243,10 @@ async function startPractice(btn, adaptive) {
     };
     const sc = await AI.practiceSetup(kind, setupOpts);
     if (o.sales === "choose" && P.mode === "sales") sc.opening = "";
-    Object.assign(P, { kind, difficulty, sc, thread: [], phase: "live", started: Date.now(), result: null, typing: !SR, status: "" });
+    Object.assign(P, { kind, difficulty, sc, thread: [], phase: "live", started: Date.now(), result: null, typing: !SR, status: "", caption: "", orb: "tap", speaking: false, thinking: false, ending: false, seed: Math.random().toString(36).slice(2) });
     renderLive();
     if (sc.opening) say(sc.opening);
-    else listen();
+    else yourTurn();
   });
 }
 
@@ -215,10 +262,10 @@ function renderLive() {
         <div class="who"><strong>${esc(sc.counterpart.name)}</strong><span class="muted small">${esc(sc.counterpart.role)}</span></div>
         <div class="caption" id="lv-caption"></div>
         <div class="status" id="lv-status"></div>
-        <div class="you"><div class="you-orb" id="lv-you">${icon("mic")}</div><div class="you-text" id="lv-you-text"></div></div>
+        <div class="you"><button type="button" class="you-orb" id="lv-you" aria-label="Tap to talk">${icon("mic")}</button><div class="you-hint" id="lv-hint"></div><div class="you-text" id="lv-you-text"></div></div>
         <div class="row center controls">
           <button class="btn primary" id="lv-send">${icon("arrow")} Send now</button>
-          <button class="btn" id="lv-pause">${(P.status || "").startsWith("Paused") ? "Resume" : "Pause"}</button>
+          <button class="btn" id="lv-pause">Pause</button>
           <button class="btn ghost" id="lv-type">Type instead</button>
         </div>
         <div class="type-box" id="lv-typebox" ${P.typing ? "" : "hidden"}><textarea id="lv-text" placeholder="Type your reply…"></textarea><button class="btn primary" id="lv-typesend">Send</button></div>
@@ -227,6 +274,7 @@ function renderLive() {
         <details><summary>Transcript</summary><div class="transcript" id="lv-transcript"></div></details></aside>
     </div>`;
   drawTranscript();
+  document.getElementById("lv-caption").textContent = P.caption || "";
   setStatus(P.status || "");
   clearInterval(renderLive._clock);
   renderLive._clock = setInterval(() => {
@@ -238,18 +286,31 @@ function renderLive() {
     if (you) you.style.setProperty("--lvl", P.listening ? Math.max(0.15, Mic.level) : 0);
   }, 80);
   document.getElementById("lv-end").onclick = () => endPractice();
-  document.getElementById("lv-send").onclick = () => P.listener?.flush();
-  document.getElementById("lv-pause").onclick = (e) => {
+  document.getElementById("lv-send").onclick = () => (P.listening ? P.listener?.flush() : null);
+  // The big orb: tap to talk, tap again to send. On iPhone every turn starts here (Apple requires a tap).
+  document.getElementById("lv-you").onclick = () => {
+    Voice.unlock();
+    if (P.speaking) {
+      // Interrupt and answer now (starting the mic inside this tap also works on iPhone).
+      Voice.cancel();
+      P.speaking = false;
+      document.getElementById("lv-avatar")?.classList.remove("talking");
+      return listen();
+    }
+    if (P.thinking) return;
+    if (P.listening) return P.listener?.flush();
+    listen();
+  };
+  document.getElementById("lv-pause").onclick = () => {
+    Voice.unlock();
     if (P.listening) {
       P.listener?.stop();
       P.listening = false;
-      e.currentTarget.textContent = "Resume";
-      setStatus("Paused — tap Resume when you're ready.");
-    } else {
-      e.currentTarget.textContent = "Pause";
-      listen();
-    }
+      setStatus("Paused — tap the mic when you're ready.");
+      setOrb("tap");
+    } else if (!P.speaking && !P.thinking) listen();
   };
+  setOrb(P.orb || "tap");
   document.getElementById("lv-type").onclick = () => {
     P.typing = !P.typing;
     document.getElementById("lv-typebox").hidden = !P.typing;
@@ -265,6 +326,36 @@ function renderLive() {
   };
   document.getElementById("lv-typesend").onclick = sendTyped;
   document.getElementById("lv-text").addEventListener("keydown", (e) => e.key === "Enter" && !e.shiftKey && (e.preventDefault(), sendTyped()));
+}
+
+// Orb states: tap (waiting for you), live (listening), speaking, thinking.
+function setOrb(state) {
+  P.orb = state;
+  const orb = document.getElementById("lv-you");
+  const hint = document.getElementById("lv-hint");
+  const pause = document.getElementById("lv-pause");
+  if (orb) orb.dataset.state = state;
+  if (pause) pause.textContent = state === "live" ? "Pause" : "Resume";
+  if (hint)
+    hint.textContent =
+      {
+        tap: "Tap to answer",
+        live: IS_IOS ? "Listening — pause to send, or tap to send now" : "Listening — pause to send",
+        speaking: "Tap to interrupt",
+      }[state] || "";
+}
+// Your turn: PC/Mac start listening right away (hands-free); iPhone waits for one tap (Apple's rule).
+function yourTurn() {
+  if (P.phase !== "live" || !location.hash.startsWith("#practice")) return;
+  if (!SR || P.typing) {
+    setOrb("tap");
+    return setStatus(SR ? "Your turn — tap the mic or type below." : "Type your reply below.", "warn");
+  }
+  if (IS_IOS) {
+    setOrb("tap");
+    return setStatus("Your turn — tap the mic and answer.", "live");
+  }
+  listen();
 }
 
 function setStatus(text, kind = "") {
@@ -285,20 +376,26 @@ async function say(text) {
   P.listener?.stop();
   P.thread.push({ from: "them", text });
   drawTranscript();
+  P.caption = text;
   const cap = document.getElementById("lv-caption");
   if (cap) cap.textContent = text;
   document.getElementById("lv-avatar")?.classList.add("talking");
   setStatus("Speaking…");
-  await Voice.speak(text);
+  P.speaking = true;
+  setOrb("speaking");
+  await Voice.speak(text, { gender: P.sc.counterpart.gender, seed: P.seed + P.sc.counterpart.name });
+  P.speaking = false;
   document.getElementById("lv-avatar")?.classList.remove("talking");
+  if (P.listening) return; // you interrupted and are already talking
   if (P.phase !== "live" || !location.hash.startsWith("#practice")) return; // left the page — stay paused
   if (P.ending) return endPractice();
-  listen();
+  yourTurn();
 }
 
 function listen() {
   if (P.phase !== "live" || !location.hash.startsWith("#practice")) return;
   if (!SR) return setStatus("Type your reply below.", "warn");
+  P.listener?.stop();
   const youText = document.getElementById("lv-you-text");
   if (youText) youText.textContent = "";
   Mic.startTurn();
@@ -311,10 +408,18 @@ function listen() {
     },
     onTurn: (text, duration) => onMyTurn(text, duration),
     onState: (s, err) => {
-      if (s === "listening") setStatus("Listening… pause for a moment to send.", "live");
-      if (s === "needs-tap") setStatus("Tap Resume to keep talking (your browser paused the mic).", "warn");
+      if (s === "listening") {
+        setStatus("Listening… pause for a moment to send.", "live");
+        setOrb("live");
+      }
+      if (s === "needs-tap") {
+        P.listening = false;
+        setOrb("tap");
+        setStatus(err === "not-allowed" ? "Tap the mic to talk. If nothing happens, allow Microphone and Speech Recognition for Safari in iPhone Settings → Privacy & Security." : "Tap the mic to keep talking.", "warn");
+      }
       if (s === "error") {
         P.listening = false;
+        setOrb("tap");
         if (err === "not-allowed" || err === "service-not-allowed") {
           P.typing = true;
           document.getElementById("lv-typebox")?.removeAttribute("hidden");
@@ -322,7 +427,7 @@ function listen() {
         } else if (err === "audio-capture" && Mic.stream) {
           Mic.close(); // another app/stream has the mic — free it and retry
           setTimeout(listen, 300);
-        } else setStatus("The mic stopped (" + err + "). Tap Resume to continue.", "warn");
+        } else setStatus("The mic stopped (" + err + "). Tap the mic to continue.", "warn");
       }
     },
   });
@@ -335,13 +440,21 @@ async function onMyTurn(text, duration) {
   P.thread.push({ from: "me", text, duration, audio });
   drawTranscript();
   setStatus("Thinking…");
+  setOrb("thinking");
+  P.thinking = true;
   try {
     const r = await AI.practiceTurn(P.sc, P.thread, P.kind, P.difficulty);
+    P.thinking = false;
     if (P.phase !== "live") return;
     if (r.end) P.ending = true;
     say(r.reply);
   } catch (e) {
-    setStatus(e.message + " — tap Resume to try again.", "warn");
+    // Keep going: the unanswered turn is removed so you can just say it again.
+    P.thinking = false;
+    P.thread.pop();
+    drawTranscript();
+    setOrb("tap");
+    setStatus(e.message + " Tap the mic to say it again.", "warn");
   }
 }
 
@@ -349,7 +462,7 @@ async function endPractice() {
   if (P.phase !== "live") return;
   P.listener?.stop();
   Voice.cancel();
-  P.listening = false;
+  Object.assign(P, { listening: false, speaking: false, thinking: false });
   clearInterval(renderLive._clock);
   if (P.thread.filter((t) => t.from === "me").length < 2) {
     Mic.close();
@@ -370,7 +483,7 @@ async function endPractice() {
     return setStatus(e.message, "warn");
   }
   const s = study();
-  s.sessions = [{ mode: P.kind, label: practiceLabel(), score: P.result.overall, difficulty: P.difficulty, at: Date.now(), metrics, result: P.result, title: P.sc.title }, ...(s.sessions || [])].slice(0, 30);
+  s.sessions = [{ id: uid(), mode: P.kind, label: practiceLabel(), score: P.result.overall, difficulty: P.difficulty, at: Date.now(), metrics, result: P.result, title: P.sc.title, counterpart: P.sc.counterpart, thread: P.thread.map(({ from, text }) => ({ from, text })), secs: Math.round((Date.now() - P.started) / 1000) }, ...(s.sessions || [])].slice(0, 40);
   saveStudy(s);
   Object.assign(P, { phase: "done", ending: false });
   route.quiet = true;
@@ -382,14 +495,18 @@ function metricCard(label, value, note, tone) {
   return `<div class="metric"><div class="k">${label}</div><div class="metric-v ${tone || ""}">${value}</div><div class="small muted">${note}</div></div>`;
 }
 
-function renderPracticeResult() {
-  const r = P.result;
-  const m = P.metrics;
+// Results page for the session just finished, or for a saved one (`saved`, opened from history as #session/<id>).
+function renderPracticeResult(saved) {
+  const live = !saved;
+  const X = saved
+    ? { r: saved.result, m: saved.metrics, label: saved.label, diff: saved.difficulty, title: saved.title || saved.label, thread: saved.thread || [], cp: saved.counterpart || { name: "Them" }, kind: saved.mode, at: saved.at }
+    : { r: P.result, m: P.metrics, label: practiceLabel(), diff: P.difficulty, title: P.sc.title, thread: P.thread, cp: P.sc.counterpart, kind: P.kind };
+  const { r, m } = X;
   const toneOf = (good, ok) => (good ? "good-text" : ok ? "" : "warn-text");
   const fillerHi = (t) => esc(t).replace(FILLERS, (f) => `<mark>${f}</mark>`);
   app.innerHTML = `
-    <div class="page-head"><div><div class="eyebrow">${esc(practiceLabel())} · ${LEVEL_LABEL[P.difficulty]}</div><h1>${esc(P.sc.title)}</h1><p class="muted">${esc(r.verdict)}</p></div>
-      <div class="row"><button class="btn primary" id="pr-again">${icon("refresh")} Practice again</button><button class="btn" id="pr-new">New setup</button></div></div>
+    <div class="page-head"><div><div class="eyebrow">${esc(X.label)} · ${LEVEL_LABEL[X.diff] || ""}${X.at ? " · " + new Date(X.at).toLocaleDateString() : ""}</div><h1>${esc(X.title)}</h1><p class="muted">${esc(r.verdict)}</p></div>
+      <div class="row">${live ? `<button class="btn primary" id="pr-again">${icon("refresh")} Practice again</button><button class="btn" id="pr-new">New setup</button>` : `<a class="btn" href="#practice">‹ Practice</a>`}</div></div>
     <div class="result-grid">
       <section class="card score-hero">${ring(r.overall, { size: 132, label: r.overall })}<div><div class="k">Overall</div><p>${esc(r.outcome || "")}</p></div></section>
       <section class="card"><h2>Scores</h2>${r.categories.map((c) => `<div class="rubric-row"><div class="spread small"><strong>${esc(c.name)}</strong><span>${c.score}</span></div><div class="bar"><i style="width:${c.score}%"></i></div><div class="small muted">${esc(c.note)}</div></div>`).join("")}</section>
@@ -400,9 +517,9 @@ function renderPracticeResult() {
         ${metricCard("Filler words", m.fillersPer100 + " / 100 words", m.topFillers.length ? m.topFillers.map(([f, n]) => `“${f}” ×${n}`).join(", ") : "None detected", toneOf(m.fillersPer100 < 2, m.fillersPer100 < 4))}
         ${metricCard("Pitch variation", m.pitchVarSemis != null ? m.pitchVarSemis + " semitones" : "—", m.pitchVarSemis != null ? (m.pitchVarSemis < 1.5 ? "Leaning monotone" : m.pitchVarSemis > 6 ? "Very animated" : "Expressive") : IS_IOS ? "Measured on PC/Mac" : "Not measured", toneOf(m.pitchVarSemis >= 1.5 && m.pitchVarSemis <= 6, m.pitchVarSemis == null))}
         ${metricCard("Volume steadiness", m.volumeCv != null ? (m.volumeCv < 0.6 ? "Steady" : m.volumeCv < 0.9 ? "Some swings" : "Uneven") : "—", m.volumeCv != null ? `variation ${m.volumeCv}` : IS_IOS ? "Measured on PC/Mac" : "Not measured", toneOf(m.volumeCv != null && m.volumeCv < 0.6, m.volumeCv == null || m.volumeCv < 0.9))}
-        ${metricCard("Questions you asked", m.questionsAsked, P.kind === "interview" ? "Ask the interviewer at the end" : "Discovery questions build trust", toneOf(m.questionsAsked >= 3, m.questionsAsked >= 1))}
+        ${metricCard("Questions you asked", m.questionsAsked, X.kind === "interview" ? "Ask the interviewer at the end" : "Discovery questions build trust", toneOf(m.questionsAsked >= 3, m.questionsAsked >= 1))}
         ${metricCard("Hedging", m.hedges, "“I guess”, “maybe”, “kind of”", toneOf(m.hedges <= 1, m.hedges <= 3))}
-        ${metricCard("Talk share", m.talkShare + "%", P.kind === "fpclient" || P.kind === "sales" ? "Listen more than you talk (≈40–55%)" : "Answers should carry the conversation", "")}
+        ${metricCard("Talk share", m.talkShare + "%", X.kind === "fpclient" || X.kind === "sales" ? "Listen more than you talk (≈40–55%)" : "Answers should carry the conversation", "")}
         ${metricCard("Longest pause", m.longestPause != null ? m.longestPause + "s" : "—", "Brief pauses read as confident", "")}
       </div>
       <p>${esc(r.tone)}</p>
@@ -411,7 +528,14 @@ function renderPracticeResult() {
       <section class="card"><h2>What worked</h2><ul>${r.strengths.map((x) => `<li>${esc(x)}</li>`).join("")}</ul><div class="callout practice"><strong>Next drill</strong><p>${esc(r.nextDrill)}</p></div></section>
       <section class="card"><h2>How to get better</h2>${r.improvements.map((x) => `<div class="improve"><strong>${esc(x.issue)}</strong><div class="quote">“${esc(x.quote)}”</div><div class="better">${icon("arrow")} ${esc(x.better)}</div></div>`).join("")}</section>
     </div>
-    <section class="card"><h2>Transcript</h2><div class="transcript full">${P.thread.map((t) => `<p><strong>${t.from === "me" ? "You" : esc(P.sc.counterpart.name.split(" ")[0])}:</strong> ${t.from === "me" ? fillerHi(t.text) : esc(t.text)}</p>`).join("")}</div><p class="small muted">Filler words are highlighted.</p></section>`;
+    ${
+      X.thread.length
+        ? `<section class="card"><div class="section-head"><h2>Transcript</h2><button class="btn small" id="pr-replay">${icon("play")} Replay conversation</button></div><div class="transcript full">${X.thread.map((t) => `<p><strong>${t.from === "me" ? "You" : esc(X.cp.name.split(" ")[0])}:</strong> ${t.from === "me" ? fillerHi(t.text) : esc(t.text)}</p>`).join("")}</div><p class="small muted">Filler words are highlighted. Replay reads both sides aloud${Eleven.enabled() ? " (uses ElevenLabs credits)" : ""}.</p></section>`
+        : ""
+    }
+    ${progressCardHTML(X.kind)}`;
+  document.getElementById("pr-replay")?.addEventListener("click", (e) => replayThread(X.thread, X.cp, e.currentTarget));
+  if (!live) return;
   document.getElementById("pr-again").onclick = (e) => {
     P.phase = "setup";
     startPractice(e.currentTarget, adaptiveLevel(practiceKind()));

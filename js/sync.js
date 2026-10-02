@@ -3,7 +3,7 @@
 // so the gist only ever holds ciphertext. The GitHub token and passphrase stay on each device.
 
 const Sync = {
-  KEYS: ["bank", "aiCompanies", "practice", "coach", "resumes", "research", "settings", "tracker", "essays", "collegeProfile", "study"],
+  KEYS: ["bank", "aiCompanies", "practice", "coach", "resumes", "research", "settings", "tracker", "essays", "collegeProfile", "study", "markets", "brand"],
   FILE: "launchpad-sync.json",
   DESC: "Launchpad sync (encrypted)",
   _timer: null,

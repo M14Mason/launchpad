@@ -6,9 +6,157 @@
 const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
 const IS_IOS = /iPhone|iPad|iPod/.test(navigator.userAgent) || (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1);
 
+// ElevenLabs: studio-quality human voices. The key is typed into Settings and stays in this browser (like the Claude key).
+// Audio plays through one <audio> element that is "unlocked" during a tap, which iPhone requires.
+const ELEVEN_DEFAULTS = {
+  female: ["EXAVITQu4vr4xnSDxMaL", "cgSgspJ2msm6clMCkdW9"], // Sarah, Jessica
+  male: ["nPczCjzI2devNBz1zQrb", "cjVigY5qzO86Huf0OWal", "TX3LPaxmHKxFdv7VOQHJ"], // Brian, Eric, Liam
+};
+const Eleven = {
+  audio: null,
+  cache: new Map(),
+  _voices: null,
+  enabled() {
+    return !!getSettings().elevenKey;
+  },
+  // Call inside a tap/click: plays a silent clip so later audio is allowed to start on its own (iOS/Safari).
+  unlock() {
+    try {
+      if (!this.audio) {
+        this.audio = new Audio();
+        this.audio.playsInline = true;
+        this.audio.setAttribute("playsinline", "");
+      }
+      if (this._unlocked) return;
+      const sr = 8000;
+      const n = 800;
+      const buf = new ArrayBuffer(44 + n * 2);
+      const v = new DataView(buf);
+      const w = (o, str) => [...str].forEach((c, i) => v.setUint8(o + i, c.charCodeAt(0)));
+      w(0, "RIFF");
+      v.setUint32(4, 36 + n * 2, true);
+      w(8, "WAVEfmt ");
+      v.setUint32(16, 16, true);
+      v.setUint16(20, 1, true);
+      v.setUint16(22, 1, true);
+      v.setUint32(24, sr, true);
+      v.setUint32(28, sr * 2, true);
+      v.setUint16(32, 2, true);
+      v.setUint16(34, 16, true);
+      w(36, "data");
+      v.setUint32(40, n * 2, true);
+      this.audio.src = URL.createObjectURL(new Blob([buf], { type: "audio/wav" }));
+      this.audio.play()?.then?.(() => (this._unlocked = true)).catch?.(() => {});
+    } catch {}
+  },
+  async request(path, opts = {}) {
+    let res;
+    try {
+      res = await fetch("https://api.elevenlabs.io" + path, { ...opts, headers: { "xi-api-key": getSettings().elevenKey, "Content-Type": "application/json" } });
+    } catch {
+      throw new Error("Couldn't reach ElevenLabs — check your internet connection.");
+    }
+    if (res.ok) return res;
+    let detail = "";
+    try {
+      const j = await res.json();
+      detail = j.detail?.status || j.detail?.code || j.detail?.message || "";
+    } catch {}
+    if (res.status === 402 || /quota|credit/i.test(detail)) throw new Error("ElevenLabs: you're out of voice credits this month.");
+    if (res.status === 401) throw new Error(/permission|missing/i.test(detail) ? "ElevenLabs: this key is missing a permission (turn on Text to Speech and Voices → Read)." : "ElevenLabs rejected the key — check it in Settings.");
+    if (res.status === 429) throw new Error("ElevenLabs is busy right now.");
+    throw new Error(`ElevenLabs error ${res.status}${detail ? " (" + detail + ")" : ""}.`);
+  },
+  async voices(force) {
+    if (this._voices && !force) return this._voices;
+    const j = await (await this.request("/v1/voices")).json();
+    this._voices = (j.voices || []).map((v) => ({ id: v.voice_id, name: v.name, gender: v.labels?.gender || "", accent: v.labels?.accent || "", desc: v.labels?.description || v.labels?.descriptive || v.labels?.use_case || "" }));
+    return this._voices;
+  },
+  async usage() {
+    const j = await (await this.request("/v1/user/subscription")).json();
+    return { used: j.character_count, limit: j.character_limit, resets: j.next_character_count_reset_unix ? new Date(j.next_character_count_reset_unix * 1000) : null, tier: j.tier };
+  },
+  // The voice chosen in Settings, or (Auto) an American voice that fits the character's gender.
+  async voiceFor(gender, seed = "") {
+    const want = getSettings().elevenVoice;
+    if (want && want !== "auto") return want;
+    const g = /^m/i.test(gender || "") ? "male" : "female";
+    try {
+      const list = (await this.voices()).filter((v) => v.gender === g);
+      const us = list.filter((v) => /americ/i.test(v.accent));
+      const pool = (us.length ? us : list).map((v) => v.id);
+      if (pool.length) return pool[Math.abs(hash(seed)) % pool.length];
+    } catch {}
+    return ELEVEN_DEFAULTS[g][Math.abs(hash(seed)) % ELEVEN_DEFAULTS[g].length];
+  },
+  async audioFor(text, voiceId) {
+    const k = voiceId + "|" + text;
+    if (this.cache.has(k)) return this.cache.get(k);
+    const s = getSettings();
+    const res = await this.request(`/v1/text-to-speech/${voiceId}?output_format=mp3_44100_128`, {
+      method: "POST",
+      body: JSON.stringify({
+        text,
+        model_id: s.elevenModel || "eleven_flash_v2_5",
+        voice_settings: { stability: 0.4, similarity_boost: 0.8, style: 0.2, use_speaker_boost: true, speed: Math.min(1.2, Math.max(0.7, s.voiceRate || 1)) },
+      }),
+    });
+    const url = URL.createObjectURL(await res.blob());
+    this.cache.set(k, url);
+    if (this.cache.size > 40) {
+      const [old] = this.cache.keys();
+      URL.revokeObjectURL(this.cache.get(old));
+      this.cache.delete(old);
+    }
+    return url;
+  },
+  async play(text, { gender, seed, onStart, isCurrent }) {
+    const url = await this.audioFor(text, await this.voiceFor(gender, seed));
+    if (!isCurrent()) return;
+    if (!this.audio) this.unlock();
+    const a = this.audio;
+    await new Promise((res, rej) => {
+      let done = false;
+      const started = Date.now();
+      const finish = (err) => {
+        if (done) return;
+        done = true;
+        clearInterval(poll);
+        a.onended = a.onerror = null;
+        err ? rej(err) : res();
+      };
+      // Ends on its own, when cancelled, or if the browser never reports the end.
+      const poll = setInterval(() => {
+        if (!isCurrent()) {
+          a.pause();
+          finish();
+        } else if (a.duration && isFinite(a.duration) && Date.now() - started > a.duration * 1000 + 4000) finish();
+        else if (Date.now() - started > 120000) finish();
+      }, 200);
+      a.onended = () => finish();
+      a.onerror = () => finish(new Error("Couldn't play the ElevenLabs audio."));
+      a.src = url;
+      onStart?.();
+      a.play()?.catch?.((e) => finish(new Error(e.name === "NotAllowedError" ? "Your phone blocked the audio — tap the screen once." : "Couldn't play the ElevenLabs audio.")));
+    });
+  },
+  stop() {
+    try {
+      this.audio?.pause();
+    } catch {}
+  },
+};
+function hash(s) {
+  let h = 0;
+  for (const c of String(s)) h = (h * 31 + c.charCodeAt(0)) | 0;
+  return h;
+}
+
 const Voice = {
   supported: "speechSynthesis" in window,
   _ready: null,
+  _token: 0,
   ready() {
     if (!this.supported) return Promise.resolve([]);
     return (this._ready ||= new Promise((res) => {
@@ -49,22 +197,46 @@ const Voice = {
     const want = getSettings().voiceURI;
     return list.find((v) => v.voiceURI === want) || list[0] || null;
   },
+  // Call inside a tap: lets speech and audio start later without another tap (iOS/Safari).
+  unlock() {
+    Eleven.unlock();
+    try {
+      if (this._unlocked || !this.supported) return;
+      const u = new SpeechSynthesisUtterance(" ");
+      u.volume = 0;
+      speechSynthesis.speak(u);
+      this._unlocked = true;
+    } catch {}
+  },
   stop() {
+    Eleven.stop();
     if (this.supported) speechSynthesis.cancel();
   },
-  // Speak sentence by sentence (sounds more natural and avoids Chrome's long-utterance cutoff). Resolves when finished.
-  async speak(text, { onStart } = {}) {
-    if (!this.supported || !text) return;
-    const voice = await this.pick();
+  // ElevenLabs when a key is set, otherwise the best device voice. Resolves when finished or cancelled.
+  async speak(text, { onStart, gender, seed } = {}) {
+    if (!text) return;
     this.stop();
-    this._cancelled = false;
+    const tok = ++this._token;
+    const isCurrent = () => tok === this._token;
+    if (Eleven.enabled()) {
+      try {
+        return await Eleven.play(String(text), { gender, seed, onStart, isCurrent });
+      } catch (e) {
+        if (!isCurrent()) return;
+        if (!this._warned) toast(e.message + " Using the device voice instead.");
+        this._warned = true;
+      }
+    }
+    if (!this.supported) return;
+    const voice = await this.pick();
+    // Sentence by sentence: sounds more natural and avoids Chrome's long-utterance cutoff.
     const parts = String(text)
       .replace(/\s+/g, " ")
       .split(/(?<=[.!?])\s+(?=[A-Z0-9"'])/)
       .filter((s) => s.trim());
     onStart?.();
     for (const part of parts) {
-      if (this._cancelled) break;
+      if (!isCurrent()) break;
       await new Promise((res) => {
         const u = new SpeechSynthesisUtterance(part);
         if (voice) {
@@ -73,21 +245,38 @@ const Voice = {
         }
         u.rate = getSettings().voiceRate || 1;
         u.pitch = 1;
-        u.onend = u.onerror = () => res();
+        let began = false;
+        let quiet = 0;
+        const t0 = Date.now();
+        const finish = () => {
+          clearInterval(poll);
+          res();
+        };
+        u.onstart = () => (began = true);
+        u.onend = u.onerror = finish;
+        try {
+          speechSynthesis.resume(); // iOS can leave the queue paused
+        } catch {}
         speechSynthesis.speak(u);
-        // Safety: never hang if the browser drops the end event.
-        setTimeout(res, Math.max(4000, part.length * 110));
+        // iOS/Safari sometimes never fires "end": watch speechSynthesis.speaking instead of guessing a timeout.
+        const poll = setInterval(() => {
+          if (!isCurrent()) return finish();
+          if (speechSynthesis.speaking) began = true;
+          else if (began || Date.now() - t0 > 2500) quiet++;
+          if (quiet >= 2 || Date.now() - t0 > 8000 + part.length * 120) finish();
+        }, 150);
       });
     }
-    this._cancelled = false;
   },
   cancel() {
-    this._cancelled = true;
+    this._token++;
     this.stop();
   },
 };
 
-// Hands-free listener: collects a turn, sends after `silenceMs` of quiet. Keeps itself alive across browser timeouts.
+// Speech-to-text for one turn; sends after `silenceMs` of quiet.
+// PC/Mac: keeps listening across browser timeouts. iPhone: Apple only lets the mic start from a tap, so each turn
+// starts with a tap and ends when you pause — the "needs-tap" state asks for the next tap.
 class Listener {
   constructor({ onText, onTurn, onState, silenceMs = 2000 }) {
     Object.assign(this, { onText, onTurn, onState, silenceMs });
@@ -99,21 +288,22 @@ class Listener {
   start() {
     if (!SR) return this.onState?.("unsupported");
     this.active = true;
-    this.final = "";
-    this.interim = "";
-    this.heardAt = 0;
-    this.firstAt = 0;
+    this.final = this.interim = this.carried = "";
+    this.heardAt = this.firstAt = this.restarts = 0;
     this.rec = new SR();
-    this.rec.continuous = !IS_IOS; // iOS ends sessions on its own; we restart instead
+    this.rec.continuous = !IS_IOS;
     this.rec.interimResults = true;
     this.rec.lang = "en-US";
     this.rec.onresult = (e) => {
+      // Rebuild from the full results list each time (Safari re-sends earlier results; this avoids doubled words).
+      let fin = "";
       let interim = "";
-      for (let i = e.resultIndex; i < e.results.length; i++) {
+      for (let i = 0; i < e.results.length; i++) {
         const r = e.results[i];
-        if (r.isFinal) this.final += (this.final ? " " : "") + r[0].transcript.trim();
+        if (r.isFinal) fin += (fin ? " " : "") + r[0].transcript.trim();
         else interim += r[0].transcript;
       }
+      this.final = [this.carried, fin].filter(Boolean).join(" ");
       this.interim = interim.trim();
       const now = performance.now();
       if (!this.firstAt) this.firstAt = now;
@@ -123,12 +313,29 @@ class Listener {
     this.rec.onerror = (e) => {
       if (e.error === "no-speech" || e.error === "aborted") return;
       this.lastError = e.error;
+      if (IS_IOS && this.active) {
+        // On iPhone, an error mid-turn means "start again from a tap", not "blocked forever".
+        if (this.text()) return this.flush();
+        this.active = false;
+        clearInterval(this.timer);
+        return this.onState?.("needs-tap", e.error);
+      }
       this.onState?.("error", e.error);
     };
     this.rec.onend = () => {
       if (!this.active) return;
+      if (IS_IOS) {
+        // iPhone ends the session when you pause: send what was said, or wait for the next tap.
+        if (this.text()) return this.flush();
+        this.active = false;
+        clearInterval(this.timer);
+        return this.onState?.("needs-tap");
+      }
+      // PC/Mac: the browser stopped on its own (timeout) — keep the words so far and keep listening.
+      this.carried = this.final;
+      if (++this.restarts > 60) return this.onState?.("needs-tap");
       try {
-        this.rec.start(); // browser stopped on its own (timeout / iOS) — keep listening
+        this.rec.start();
       } catch {
         this.onState?.("needs-tap");
       }
@@ -137,7 +344,8 @@ class Listener {
       this.rec.start();
       this.onState?.("listening");
     } catch {
-      this.onState?.("needs-tap");
+      this.active = false;
+      return this.onState?.("needs-tap");
     }
     clearInterval(this.timer);
     this.timer = setInterval(() => {
