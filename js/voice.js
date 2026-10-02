@@ -238,7 +238,10 @@ const Voice = {
   stop() {
     Eleven.stop();
     // Only cancel speech we started — never the iPhone unlock utterance.
-    if (this.supported && this._talking && (speechSynthesis.speaking || speechSynthesis.pending)) speechSynthesis.cancel();
+    if (this.supported && this._talking && (speechSynthesis.speaking || speechSynthesis.pending)) {
+      speechSynthesis.cancel();
+      this._cancelAt = Date.now();
+    }
     this._talking = false;
   },
   // ElevenLabs when a key is set, otherwise the best device voice. Resolves when finished or cancelled.
@@ -259,6 +262,13 @@ const Voice = {
     }
     // Let the iPhone unlock utterance finish instead of cancelling it.
     if (this._unlockAt && Date.now() - this._unlockAt < 600) await new Promise((r) => setTimeout(r, 600 - (Date.now() - this._unlockAt)));
+    if (!isCurrent()) return;
+    // Chrome sometimes drops an utterance spoken right after cancel(), or gets stuck "speaking" with no sound.
+    if (speechSynthesis.speaking && !this._unlockAt) {
+      speechSynthesis.cancel();
+      this._cancelAt = Date.now();
+    }
+    if (this._cancelAt && Date.now() - this._cancelAt < 150) await new Promise((r) => setTimeout(r, 150));
     if (!isCurrent()) return;
     this._talking = true;
     if (!this.supported) return;

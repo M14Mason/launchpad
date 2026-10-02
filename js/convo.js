@@ -298,7 +298,6 @@ async function startPractice(btn, adaptive) {
   const o = P.opts;
   const difficulty = o.difficulty === "adaptive" ? adaptive : o.difficulty;
   // Audio measurement runs alongside speech recognition on PC/Mac. iPhone allows only one mic user, so it's skipped there.
-  if (!IS_IOS) Mic.open(o.micId || getSettings().micId).catch(() => {});
   await busy(btn, async () => {
     const role = o.interviewType === "program" && findRole(o.roleId);
     const setupOpts = {
@@ -415,9 +414,9 @@ function setOrb(state) {
 // Your turn: PC/Mac start listening right away (hands-free); iPhone waits for one tap (Apple's rule).
 function yourTurn() {
   if (P.phase !== "live" || !location.hash.startsWith("#practice")) return;
-  if (!SR || P.typing) {
+  if (!SR || P.typing || P.micBlocked) {
     setOrb("tap");
-    return setStatus(SR ? "Your turn — tap the mic or type below." : "Type your reply below.", "warn");
+    return setStatus(!SR ? "Type your reply below." : P.micBlocked ? "Tap the mic to try again, or type below." : "Your turn — type below or tap the mic.", "warn");
   }
   if (IS_IOS) {
     setOrb("tap");
@@ -442,6 +441,10 @@ function drawTranscript() {
 async function say(text) {
   P.listening = false;
   P.listener?.stop();
+  // Release the mic before speaking: an open mic puts Windows/Mac into "call" mode, which can mute or duck the voice.
+  const hadMic = !!Mic.stream;
+  Mic.close();
+  if (hadMic) await wait(250);
   P.thread.push({ from: "them", text });
   drawTranscript();
   P.caption = text;
@@ -457,6 +460,8 @@ async function say(text) {
   if (P.listening) return; // you interrupted and are already talking
   if (P.phase !== "live" || !location.hash.startsWith("#practice")) return; // left the page — stay paused
   if (P.ending) return endPractice();
+  await wait(350); // let the speaker fully finish so the mic doesn't hear the end of it
+  if (P.listening || P.phase !== "live") return;
   yourTurn();
 }
 
@@ -464,9 +469,9 @@ function listen() {
   if (P.phase !== "live" || !location.hash.startsWith("#practice")) return;
   if (!SR) return setStatus("Type your reply below.", "warn");
   P.listener?.stop();
+  P.micBlocked = false;
   const youText = document.getElementById("lv-you-text");
   if (youText) youText.textContent = "";
-  Mic.startTurn();
   P.listening = true;
   P.listener = new Listener({
     silenceMs: 2000,
@@ -479,6 +484,12 @@ function listen() {
       if (s === "listening") {
         setStatus("Listening… pause for a moment to send.", "live");
         setOrb("live");
+        P.netRetries = 0;
+        // Tone measurement (PC/Mac only) runs just while you talk, after recognition has the mic.
+        if (!IS_IOS && !Mic.stream)
+          Mic.open(getSettings().micId)
+            .then(() => (P.listening ? Mic.startTurn() : Mic.close()))
+            .catch(() => {});
       }
       if (s === "needs-tap") {
         P.listening = false;
@@ -486,16 +497,23 @@ function listen() {
         setStatus(err === "not-allowed" ? "Tap the mic to talk. If nothing happens, allow Microphone and Speech Recognition for Safari in iPhone Settings → Privacy & Security." : "Tap the mic to keep talking.", "warn");
       }
       if (s === "error") {
+        // Fully stop this listener so nothing keeps running in the background.
+        const l = P.listener;
+        if (l) {
+          l.onState = null;
+          l.stop();
+        }
         P.listening = false;
+        Mic.close();
         setOrb("tap");
         if (err === "not-allowed" || err === "service-not-allowed") {
-          P.typing = true;
+          P.micBlocked = true;
           document.getElementById("lv-typebox")?.removeAttribute("hidden");
-          setStatus("Microphone or speech recognition is blocked — allow it in your browser settings, or type below.", "warn");
-        } else if (err === "audio-capture" && Mic.stream) {
-          Mic.close(); // another app/stream has the mic — free it and retry
-          setTimeout(listen, 300);
-        } else setStatus("The mic stopped (" + err + "). Tap the mic to continue.", "warn");
+          setStatus("The browser blocked the mic or speech recognition. Allow the microphone for this site, then tap the mic — or type below.", "warn");
+        } else if ((err === "network" || err === "audio-capture") && (P.netRetries = (P.netRetries || 0) + 1) <= 2) {
+          setStatus("Reconnecting the mic…", "warn");
+          setTimeout(() => P.phase === "live" && !P.speaking && !P.thinking && listen(), 700);
+        } else setStatus((err === "network" ? "Speech recognition lost its connection" : "The mic stopped (" + err + ")") + ". Tap the mic to continue.", "warn");
       }
     },
   });
@@ -505,6 +523,7 @@ function listen() {
 async function onMyTurn(text, duration) {
   P.listening = false;
   const audio = Mic.endTurn();
+  Mic.close();
   P.thread.push({ from: "me", text, duration, audio });
   drawTranscript();
   setStatus("Thinking…");

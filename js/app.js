@@ -163,6 +163,7 @@ function route() {
     Voice.cancel();
     if (P.phase === "live" && view !== "practice") {
       P.listener?.stop();
+      Mic.close();
       P.listening = false;
       P.status = "Paused — tap the mic when you are back.";
       P.orb = "tap";
