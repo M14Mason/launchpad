@@ -73,11 +73,16 @@ const OFFLINE = (() => {
   const NETWORK = ["Nice to meet you, Mason. So what got you interested in finance?", "That's impressive for a sophomore. What are you hoping to do this summer?", "Honestly, the best thing I did early on was talk to a lot of people.", "My team does a mix of analysis and client work. It's busy but fun.", "Sure, what would you like to know?"];
 
   function setup(kind, opts, difficulty) {
-    const g = Math.random() < 0.5 ? "female" : "male";
-    const name = pick(NAMES[g]);
+    const g = opts.character?.gender || (Math.random() < 0.5 ? "female" : "male");
+    const name = opts.character ? `${opts.character.name} ${pick(["Reyes", "Bennett", "Cho", "Patel", "Morgan", "Hayes", "Silva", "Brooks"])}` : pick(NAMES[g]);
     const base = { offline: true, counterpart: { name, gender: g, role: "" }, objectives: [], hidden: "", maxTurns: 12, step: 0, followed: {}, revealed: [] };
     if (kind === "interview") {
-      const qs = (BANKS[opts.interviewType] || BANKS.behavioral).slice(0, Math.max(3, opts.count || 5));
+      // Length by time: about one main question per 1.7 minutes.
+      const want = Math.max(3, Math.round((opts.minutes || 8) / 1.7));
+      let pool = [...(BANKS[opts.interviewType] || BANKS.behavioral)];
+      if (opts.warmup === false) pool = pool.filter((q) => !/about yourself/i.test(q));
+      for (const q of BANKS.mixed) if (pool.length < want && !pool.includes(q)) pool.push(q);
+      const qs = pool.slice(0, want);
       if (opts.role) qs.splice(1, 0, `Why are you interested in ${opts.role.split(" — ")[0]}, specifically?`);
       qs.push("That's all my questions. Do you have any questions for me?");
       return { ...base, questions: qs, title: opts.role ? `Interview: ${opts.role.split(".")[0]}` : `${opts.interviewType[0].toUpperCase() + opts.interviewType.slice(1)} interview`, counterpart: { ...base.counterpart, role: opts.interviewType === "college" ? "Admissions interviewer" : "Interviewer" }, brief: "A practice interview with built-in questions. Use STAR: situation, task, action, result — with real numbers.", opening: `Hi Mason, I'm ${name.split(" ")[0]}. Thanks for making the time. ${qs[0]}`, objectives: ["Answer with specific examples", "Use STAR structure", "Mention real numbers and results", "Ask a thoughtful question at the end"] };
@@ -91,11 +96,17 @@ const OFFLINE = (() => {
     return { ...base, title: "Networking conversation", counterpart: { ...base.counterpart, role: opts.persona || "Professional in finance" }, brief: "Introduce yourself, show curiosity, and end with one small, specific ask.", opening: "", objectives: ["Clear 20-second intro", "Ask curious questions", "Make a small, specific ask"] };
   }
 
-  function turn(sc, thread, kind) {
+  function turn(sc, thread, kind, t = {}) {
     const mine = thread.filter((t) => t.from === "me");
     const last = mine[mine.length - 1]?.text || "";
     const n = words(last).length;
     const ack = pick(ACKS);
+    const o = t.opts || {};
+    // Time's up: every mode closes naturally.
+    if (t.minutes && t.elapsed >= t.minutes) {
+      const close = { interview: "We're right at time, so let's stop there. Thanks so much, Mason — really enjoyed this.", fpclient: "Oh wow, that went fast. This was really helpful — can we pick this up next time?", sales: sc.revealed?.length >= 2 ? "I'm out of time, but send me the details — I'm interested." : "I've got to jump, but thanks for the pitch.", networking: "I've got to run, but it was great talking with you." }[kind];
+      return { reply: close, end: true };
+    }
     if (kind === "interview") {
       const qs = sc.questions;
       // One follow-up per question when the answer is thin.
@@ -108,16 +119,27 @@ const OFFLINE = (() => {
       return { reply: `${ack} ${qs[sc.step]}`, end: false };
     }
     if (kind === "fpclient") {
+      const c = o.client || {};
       const asked = /\?|what|how|tell me|do you/i.test(last);
+      // A beginner asks what jargon means (once per term).
+      const jargon = (last.match(/\b(roth|ira|401\(?k\)?|index fund|etf|asset allocation|diversif\w*|compound(ing)?|expense ratio|liquidity|apr)\b/i) || [])[0];
+      sc.asked ||= [];
+      if (jargon && (c.know || 2) <= 2 && !sc.asked.includes(jargon.toLowerCase())) {
+        sc.asked.push(jargon.toLowerCase());
+        return { reply: `Sorry — what's ${/^[aeiou]/i.test(jargon) ? "an" : "a"} ${jargon}? I've heard of it but I don't really get it.`, end: false };
+      }
       const hit = CLIENT.facts.find(([re], i) => re.test(last) && !sc.revealed.includes(i));
       if (hit) sc.revealed.push(CLIENT.facts.indexOf(hit));
+      const vague = (c.numbers || 2) <= 2 ? pick(["Honestly I'm not sure exactly, but ", "I think it's something like — ", "Don't quote me, but "]) : "";
+      const worried = (c.worry || 3) >= 4 && Math.random() < 0.35 ? " Sorry, this stuff just stresses me out." : "";
+      if (hit) return { reply: vague + (vague && !/^I\b/.test(hit[1]) ? hit[1].charAt(0).toLowerCase() + hit[1].slice(1) : hit[1]) + worried, end: false };
       if (mine.length >= 9) return { reply: `${sc.revealed.length >= 4 ? "This actually helps a lot. I feel like I have a plan." : "Okay... I think I need to think about it more."} Thanks for your time.`, end: true };
       return { reply: hit ? hit[1] : asked ? pick(["I'm not totally sure. What do you mean exactly?", "Good question. Honestly, I've never thought about that."]) : pick(CLIENT.fillers), end: false };
     }
     if (kind === "sales") {
       const asked = /\?/.test(last) || /\b(what|how|why|tell me|do you|are you)\b/i.test(last);
       if (/\b(next step|sign|trial|demo|would you be open|can we|shall we|ready to|get started|buy)\b/i.test(last) && mine.length >= 3)
-        return { reply: sc.revealed.length >= 2 ? "Okay, you've made a good case. Let's set up a trial next week." : "I'm not convinced yet — you never really asked what we need. I'll pass for now.", end: true };
+        return { reply: sc.revealed.length >= ((o.interest || 3) >= 4 ? 1 : 2) ? "Okay, you've made a good case. Let's set up a trial next week." : "I'm not convinced yet — you never really asked what we need. I'll pass for now.", end: true };
       if (asked && sc.revealed.length < BUYER.needs.length) {
         const r = BUYER.needs[sc.revealed.length];
         sc.revealed.push(r);
@@ -160,7 +182,21 @@ const OFFLINE = (() => {
     if (fillerTurn && (fillerTurn.text.match(FILLERS) || []).length >= 2) improvements.push({ issue: "Filler words weakened this answer", quote: fillerTurn.text.slice(0, 160), better: "Pause silently instead of saying “um” or “like” — a one-second pause sounds confident." });
     if (numbers === 0) improvements.push({ issue: "No numbers or measurable results", quote: (mine[1] || mine[0])?.text.slice(0, 160) || "", better: "Use real figures from your work (lines of code, users, hours saved, returns in a backtest)." });
     if (m.questionsAsked < 2) improvements.push({ issue: "You asked very few questions", quote: mine[mine.length - 1]?.text.slice(0, 160) || "", better: kind === "interview" ? "End with a question like “What does a great intern do in the first month here?”" : "Ask open questions before giving answers or pitching." });
+    // Answer-by-answer: score each reply on length, specifics and fillers.
+    const answers = thread
+      .map((t, i) => ({ t, prev: thread[i - 1] }))
+      .filter(({ t }) => t.from === "me")
+      .slice(0, 10)
+      .map(({ t, prev }) => {
+        const w = words(t.text).length;
+        const nums = (t.text.match(/\d/g) || []).length;
+        const fill = (t.text.match(FILLERS) || []).length;
+        const score = clamp(40 + Math.min(30, w / 2) + (nums ? 12 : 0) + (/\bI (built|made|led|fixed|learned|created|tested)\b/i.test(t.text) ? 10 : 0) - fill * 7 - (w > 200 ? 15 : 0));
+        const tip = w < 25 ? "Too short — add what you did and what happened." : fill >= 2 ? "Cut the filler words; pause instead." : !nums && kind === "interview" ? "Add a number or concrete result." : w > 200 ? "Tighten it — lead with the point, then one example." : "Good — keep this structure.";
+        return { prompt: (prev?.text || "").slice(0, 90), quote: words(t.text).slice(0, 15).join(" "), score, tip };
+      });
     return {
+      answers,
       overall,
       verdict: overall >= 75 ? "Strong session — clear and specific." : overall >= 55 ? "Solid start with clear room to sharpen." : "A good rep — focus on specifics and structure next time.",
       categories: cats.map(([name, score]) => ({ name, score, note: score >= 75 ? "Strong" : score >= 55 ? "Okay — can be sharper" : "Needs work" })),

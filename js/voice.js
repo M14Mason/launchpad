@@ -124,11 +124,12 @@ const Eleven = {
     }
     return url;
   },
-  async play(text, { gender, seed, onStart, isCurrent }) {
+  async play(text, { gender, seed, onStart, isCurrent, voiceId, onWord }) {
     if (this.broken) throw Object.assign(new Error(this.broken), { kind: "key" });
     let url;
     try {
-      url = await this.audioFor(text, await this.voiceFor(gender, seed));
+      const chosen = getSettings().elevenVoice;
+      url = await this.audioFor(text, chosen && chosen !== "auto" ? chosen : voiceId || (await this.voiceFor(gender, seed)));
     } catch (e) {
       if (e.kind === "key") this.broken = e.message; // don't keep failing (and waiting) on every line
       if (e.kind !== "voice") throw e;
@@ -142,7 +143,7 @@ const Eleven = {
     await new Promise((res, rej) => {
       let done = false;
       const started = Date.now();
-      const finish = (err) => {
+      let finish = (err) => {
         if (done) return;
         done = true;
         clearInterval(poll);
@@ -157,6 +158,10 @@ const Eleven = {
         } else if (a.duration && isFinite(a.duration) && Date.now() - started > a.duration * 1000 + 4000) finish();
         else if (Date.now() - started > 120000) finish();
       }, 200);
+      // No word timings from an mp3: pulse at a natural speaking rhythm while it plays.
+      const beat = onWord && setInterval(() => !a.paused && onWord(0.6 + Math.random() * 0.4), 230);
+      const done0 = finish;
+      finish = (err) => (clearInterval(beat), done0(err));
       a.onended = () => finish();
       a.onerror = () => finish(new Error("Couldn't play the ElevenLabs audio."));
       a.src = url;
@@ -215,10 +220,21 @@ const Voice = {
     const all = (await this.ready()).filter((v) => /^en/i.test(v.lang));
     return all.sort((a, b) => this.rank(b) - this.rank(a));
   },
-  async pick() {
+  async pick(gender) {
     const list = await this.list();
     const want = getSettings().voiceURI;
-    return list.find((v) => v.voiceURI === want) || list[0] || null;
+    const mine = list.find((v) => v.voiceURI === want);
+    if (!gender) return mine || list[0] || null;
+    // Characters get a voice that matches them; your chosen voice is used when it fits.
+    const g = /^m/i.test(gender) ? "male" : "female";
+    if (mine && this.genderOf(mine) === g) return mine;
+    return list.find((v) => this.genderOf(v) === g) || mine || list[0] || null;
+  },
+  genderOf(v) {
+    const n = v.name;
+    if (/female|woman|samantha|ava|zoe|allison|susan|victoria|karen|moira|tessa|aria|jenny|emma|michelle|serena|joelle|noelle|nicky|kathy|fiona|veena|ellie|libby|sonia|natasha|clara|catherine|heather|zira|hazel|linda|sara|nancy|jane|elizabeth|ana\b|google us english$/i.test(n)) return "female";
+    if (/\bmale\b|man\b|daniel|alex\b|tom\b|fred|aaron|evan|nathan|guy|davis|andrew|brian|christopher|eric|roger|steffan|david|mark|george|ryan|william|liam|james|oliver|arthur|reed|rishi|gordon|lee\b|jacob|tony|richard|thomas/i.test(n)) return "male";
+    return "";
   },
   // Call inside a tap: lets speech and audio start later without another tap (iOS/Safari).
   // Desktop browsers don't need this; on iPhone a silent utterance is spoken once and left to finish
@@ -245,14 +261,16 @@ const Voice = {
     this._talking = false;
   },
   // ElevenLabs when a key is set, otherwise the best device voice. Resolves when finished or cancelled.
-  async speak(text, { onStart, gender, seed } = {}) {
+  // persona: { gender, eleven, pitch, rate } (a practice character). onWord(strength) fires as words are spoken.
+  async speak(text, { onStart, gender, seed, persona, onWord } = {}) {
+    gender = persona?.gender || gender;
     if (!text) return;
     this.stop();
     const tok = ++this._token;
     const isCurrent = () => tok === this._token;
     if (Eleven.enabled()) {
       try {
-        return await Eleven.play(String(text), { gender, seed, onStart, isCurrent });
+        return await Eleven.play(String(text), { gender, seed, onStart, isCurrent, voiceId: persona?.eleven, onWord });
       } catch (e) {
         if (!isCurrent()) return;
         this.lastError = e.message;
@@ -272,7 +290,7 @@ const Voice = {
     if (!isCurrent()) return;
     this._talking = true;
     if (!this.supported) return;
-    const voice = await this.pick();
+    const voice = await this.pick(gender);
     // Sentence by sentence: sounds more natural and avoids Chrome's long-utterance cutoff.
     const parts = String(text)
       .replace(/\s+/g, " ")
@@ -287,8 +305,9 @@ const Voice = {
           u.voice = voice;
           u.lang = voice.lang;
         }
-        u.rate = getSettings().voiceRate || 1;
-        u.pitch = 1;
+        u.rate = Math.min(1.6, (getSettings().voiceRate || 1) * (persona?.rate || 1));
+        u.pitch = persona?.pitch || 1;
+        if (onWord) u.onboundary = (e) => e.name !== "sentence" && onWord(0.7 + Math.random() * 0.3);
         let began = false;
         let quiet = 0;
         const t0 = Date.now();
@@ -341,7 +360,7 @@ function sendDelayMs() {
   return v === "tap" ? Infinity : (+v || 3) * 1000;
 }
 class Listener {
-  constructor({ onText, onTurn, onState, silenceMs = 3000, initial = "", minWords = 3 }) {
+  constructor({ onText, onTurn, onState, silenceMs = 3000, initial = "", minWords = 1 }) {
     Object.assign(this, { onText, onTurn, onState, silenceMs, initial, minWords });
     this.active = false;
   }
@@ -413,9 +432,20 @@ class Listener {
         this.pause();
       }
     };
+    // "listening" fires when the mic is actually recording (audiostart), so the first words aren't lost.
+    if (this.restarts === 0) {
+      let told = false;
+      const ready = () => {
+        if (told || rec !== this.rec || !this.active) return;
+        told = true;
+        this.readyAt = performance.now();
+        this.onState?.("listening");
+      };
+      rec.onaudiostart = ready;
+      setTimeout(ready, 1500); // some browsers never fire audiostart
+    }
     try {
       rec.start();
-      if (this.restarts === 0) this.onState?.("listening");
     } catch {
       this.pause();
     }

@@ -383,35 +383,67 @@ const DIFFICULTY_NOTE = {
 };
 Object.assign(AI, {
   async practiceSetup(mode, opts) {
+    const m = opts.minutes || 8;
+    const exchanges = Math.round(m * 1.4);
+    const lv = (k) => (opts.client?.[k] || 3) - 1;
+    const client = {
+      know: ["knows almost no finance terms (asks what a Roth IRA or index fund is)", "knows a few basic terms but mixes them up", "has average money knowledge", "is fairly savvy (reads about investing)", "is very knowledgeable and will push back on weak advice"][lv("know")],
+      numbers: ["has no idea of their real numbers — gives vague guesses", "has only a rough idea of their numbers", "knows most of their numbers", "is organized and knows their numbers", "tracks everything in a spreadsheet and gives exact figures"][lv("numbers")],
+      worry: ["is calm and relaxed about money", "is a little uneasy", "is somewhat worried", "is stressed about money", "is very anxious about money"][lv("worry")],
+    };
+    const interest = ["cold — not looking to buy anything", "skeptical", "neutral", "curious", "eager — already looking for a solution"][(opts.interest || 3) - 1];
+    const who = opts.character ? `Your first name is ${opts.character.name} (${opts.character.gender}); your personality: ${opts.character.vibe.toLowerCase()}.` : "";
     const spec = {
-      interview: `A ${opts.interviewType} interview${opts.role ? ` for: ${opts.role}` : ""}. You are the interviewer. Plan ${opts.count} main questions (mix in natural follow-ups). Types: behavioral = STAR stories; python = his bot/apps, debugging, data, APIs; markets = EMA/RSI/ATR, risk/reward, markets, a stock pitch; financial planning = budgeting, emergency funds, compound interest, risk tolerance, diversification, Roth IRA basics, client empathy; college = curiosity, why this school, contribution; mixed = blend. End by asking if he has questions for you, answer them briefly, then close.`,
-      fpclient: "A first financial-planning meeting. Mason is the planner. You are the client with a realistic money situation (income, expenses, debts, savings, goals, worries). Keep key details hidden unless he asks good discovery questions. Judge whether his advice is clear, suitable and empathetic.",
-      sales: opts.product === "choose" ? "A sales conversation. Mason will pitch a product of his choice — you don't know what yet. You are a realistic buyer. React to whatever he pitches, raise objections that fit it, and decide at the end whether to buy." : `A sales conversation. Mason is selling: ${opts.product}. You are a realistic buyer with hidden needs, a budget and objections. Decide at the end whether to buy.`,
-      networking: `A networking conversation. You are ${opts.persona || "a professional in finance"}. Mason is a high school student introducing himself. Respond naturally; reward curiosity and a specific, small ask.`,
+      interview: `A ${opts.interviewType} interview${opts.role ? ` for: ${opts.role}` : ""}. You are the interviewer. The conversation should fill about ${m} minutes (roughly ${exchanges} back-and-forth exchanges), so plan about ${Math.max(2, Math.round(m / 2))} main questions with natural follow-ups. ${opts.warmup ? "Open with a light warm-up (“tell me about yourself”)." : "Skip small talk and start with a real question."} Types: behavioral = STAR stories; python = his bot/apps, debugging, data, APIs; markets = EMA/RSI/ATR, risk/reward, a stock pitch; financial planning = budgeting, emergency funds, compound interest, risk tolerance, diversification, Roth IRA basics, client empathy; college = curiosity, why this school, contribution; mixed = blend.${opts.jobAd ? ` Tailor questions to this job ad: """${opts.jobAd}"""` : ""} Near the end, ask if he has questions for you, answer briefly, then close.`,
+      fpclient: `A first financial-planning meeting lasting about ${m} minutes. Mason is the planner; you are the client. The client ${client.know}, ${client.numbers}, and ${client.worry}. Give the client a realistic situation with 3-4 DIFFERENT money topics (for example: debt, a savings goal, retirement, insurance or a big purchase) — only one of them is the main worry. Keep details hidden until he asks good discovery questions.`,
+      sales: opts.product === "choose" ? `A ${m}-minute sales conversation. Mason will pitch a product of his choice — you don't know what yet. You are a realistic buyer who starts ${interest}. React to whatever he pitches, raise objections that fit it, and decide at the end whether to buy.` : `A ${m}-minute sales conversation. Mason is selling: ${opts.product}. You are a realistic buyer who starts ${interest}, with hidden needs, a budget and objections. Decide at the end whether to buy.`,
+      networking: `A ${m}-minute networking conversation. You are ${opts.persona || "a professional in finance"}. Mason is a high school student introducing himself. Respond naturally; reward curiosity and a specific, small ask.`,
     }[mode];
     const text = await this.ask(
       `Create a spoken role-play scenario. ${spec}
+${who}
 Difficulty: ${opts.difficulty} — ${DIFFICULTY_NOTE[opts.difficulty]}
 Return ONLY JSON:
-{"title": str, "counterpart": {"name": realistic first+last name, "role": str, "gender": "female" or "male"},
+{"title": str, "counterpart": {"name": "first + last name (use the first name given above if any)", "role": str, "gender": "female" or "male"},
  "brief": "2 sentences shown to Mason before starting (what he knows; never reveal hidden details)",
  "opening": "your first spoken line in character, or empty string if Mason should speak first",
- "hidden": "private notes only you see: situation, goals, objections, question plan",
- "objectives": ["3-5 things a great performance does in this scenario"],
- "maxTurns": number between 6 and 16}`,
+ "hidden": "private notes only you see: situation, every topic/concern with its details, objections, question plan",
+ "objectives": ["3-5 things a great performance does in this scenario"]}`,
       { effort: "low", maxTokens: 3000, timeout: 60000 }
     );
     const j = this.parseJSON(text, null);
     if (!j || !j.counterpart || typeof j.brief !== "string") throw new Error("Couldn't set up the scenario — try again.");
+    j.maxTurns = exchanges + 2;
+    j.minutes = m;
     return j;
   },
-  async practiceTurn(sc, thread, mode, difficulty) {
+  // timing: { elapsed (minutes), minutes (target) }
+  async practiceTurn(sc, thread, mode, difficulty, timing = {}) {
     const mine = thread.filter((t) => t.from === "me").length;
+    const el = timing.elapsed || 0;
+    const target = timing.minutes || sc.minutes || 8;
+    const clock =
+      el >= target
+        ? "TIME IS UP: give a warm, natural closing line now and set end to true."
+        : el >= target - 1.2
+          ? "About a minute left: start wrapping up (last question or a closing thought)."
+          : mine >= sc.maxTurns
+            ? "This has run long: wrap up naturally now and set end to true."
+            : "Keep the conversation moving; only end early if it has truly reached a natural close.";
+    const roleRules = {
+      fpclient: `As the client: follow the planner's lead. When Mason changes topics, engage fully with the new topic. Once he has acknowledged or addressed a worry, let it go — never bring the same worry up more than once more, and only if he ignored it completely. Share details when asked, in the way your knowledge level suggests (if he uses jargon you wouldn't know, ask what it means). Let your stress show in tone, not by derailing the meeting.`,
+      sales: "As the buyer: answer discovery questions honestly; raise each objection once; if he handles it well, move on.",
+      interview: "As the interviewer: ask one question at a time, follow up once when an answer is vague, then move to a new topic — don't repeat a question already answered.",
+      networking: "As the professional: be friendly and real; answer his questions with specifics.",
+    }[mode] || "";
     const text = await this.ask(
       `ROLE-PLAY (spoken). You are ${sc.counterpart.name}, ${sc.counterpart.role}. Scenario: ${sc.title}.
 Private notes: ${sc.hidden}
 Difficulty: ${difficulty} — ${DIFFICULTY_NOTE[difficulty]}
-Rules: stay fully in character. This is spoken aloud by a realistic voice, so sound like a real person talking, not writing: 1-3 short sentences, contractions, plain everyday words, a natural acknowledgment when it fits ("Got it.", "Okay, that's interesting.", "Hmm, fair."), varied sentence length, one question at a time. No lists, no markdown, no emojis, no stage directions, no "As an interviewer". React to what Mason actually said (if he's vague, press; if he asks a good question, answer with real detail). Never coach him. ${mine >= sc.maxTurns ? "Time is up: give a natural closing line now." : "When the conversation reaches a natural end, give a closing line."}
+${roleRules}
+Rules: stay fully in character. This is spoken aloud by a realistic voice, so sound like a real person talking, not writing: 1-3 short sentences, contractions, plain everyday words, a natural acknowledgment when it fits ("Got it.", "Okay, that's interesting.", "Hmm, fair."), varied sentence length, one question at a time. No lists, no markdown, no emojis, no stage directions. React to what Mason actually said (if he's vague, press; if he asks a good question, answer with real detail). Never coach him. Never repeat something you already said.
+Mason's words come from speech-to-text: if his last message looks cut off or garbled, naturally ask him to finish or repeat that part instead of guessing.
+Time: ${el.toFixed(1)} of about ${target} minutes used. ${clock}
 Transcript:
 ${thread.map((t) => `${t.from === "me" ? "Mason" : sc.counterpart.name}: ${t.text}`).join("\n")}
 Return ONLY JSON: {"reply": "what you say next", "end": true/false}`,
@@ -431,8 +463,8 @@ Return ONLY JSON: {"reply": "what you say next", "end": true/false}`,
     const text = await this.ask(
       `Analyze Mason's spoken ${mode === "fpclient" ? "financial-planning client meeting" : mode} practice. He's a high school sophomore — be honest and specific, not harsh.
 Scenario: ${sc.title}. Counterpart: ${sc.counterpart.name}, ${sc.counterpart.role}. What great looks like: ${(sc.objectives || []).join("; ")}
-Measured speech (from his mic/transcript): ${JSON.stringify(metrics)}
-Guide: conversational pace ~130-160 wpm; fillers under ~2 per 100 words is strong; pitch variation under ~1.5 semitones sounds monotone, ~2-5 is expressive; hedges ("I guess", "maybe") weaken authority.
+Measured speech (from his transcript): ${JSON.stringify(metrics)}
+Guide: conversational pace ~130-160 wpm; fillers under ~2 per 100 words is strong; hedges ("I guess", "maybe") weaken authority. His words came from speech-to-text, so ignore obvious transcription errors.
 Transcript:
 ${thread.map((t) => `${t.from === "me" ? "Mason" : sc.counterpart.name}: ${t.text}`).join("\n")}
 
@@ -442,13 +474,13 @@ Return ONLY JSON:
  "tone": "2-3 sentences on tone, confidence and wording, citing the measured numbers",
  "strengths": [2-4 str],
  "improvements": [{"issue": str, "quote": "his exact words from the transcript", "better": "a stronger way to say it using only his facts"}] (3-5),
+ "answers": [{"prompt": "what the other person asked or said (short)", "quote": "the start of Mason's reply (max 15 words)", "score": 0-100, "tip": "one specific way to make this reply better"}] (one per substantive reply of Mason's, max 10),
  "outcome": "${mode === "sales" ? "did the buyer buy and why" : mode === "fpclient" ? "would the client trust him and come back" : "would you advance him"}",
  "nextDrill": "one specific thing to practice next time"}`,
-      { effort: "medium", maxTokens: 6000 }
+      { effort: "medium", maxTokens: 7000 }
     );
     const j = this.parseJSON(text, null);
     if (!j || typeof j.overall !== "number") throw new Error("The analysis came back in an unexpected format — tap Analyze again.");
     return j;
   },
 });
-

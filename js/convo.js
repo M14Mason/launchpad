@@ -54,61 +54,171 @@ function renderPractice(arg = "") {
   renderPracticeSetup();
 }
 
+// Practice characters: each has a voice (ElevenLabs id or a matching device voice), a vibe and orb colors.
+const CHARACTERS = [
+  { id: "nora", name: "Nora", gender: "female", vibe: "Warm and encouraging", colors: ["#6d5dfc", "#22d3ee", "#c4b5fd"], eleven: "EXAVITQu4vr4xnSDxMaL", pitch: 1.05, rate: 0.98 },
+  { id: "elena", name: "Elena", gender: "female", vibe: "Crisp and professional", colors: ["#0284c7", "#4f46e5", "#bae6fd"], eleven: "FGY2WhTYpPnrIDTdsKH5", pitch: 1, rate: 1.03 },
+  { id: "jade", name: "Jade", gender: "female", vibe: "Energetic and curious", colors: ["#f97316", "#db2777", "#fde047"], eleven: "cgSgspJ2msm6clMCkdW9", pitch: 1.1, rate: 1.05 },
+  { id: "grace", name: "Grace", gender: "female", vibe: "Calm and patient", colors: ["#0d9488", "#059669", "#a7f3d0"], eleven: "Xb7hH8MSUJpSbSDYk0k2", pitch: 0.98, rate: 0.95 },
+  { id: "marcus", name: "Marcus", gender: "male", vibe: "Direct and no-nonsense", colors: ["#2563eb", "#1e3a8a", "#93c5fd"], eleven: "nPczCjzI2devNBz1zQrb", pitch: 0.92, rate: 1.02 },
+  { id: "theo", name: "Theo", gender: "male", vibe: "Friendly and upbeat", colors: ["#16a34a", "#65a30d", "#67e8f9"], eleven: "TX3LPaxmHKxFdv7VOQHJ", pitch: 1.03, rate: 1.04 },
+  { id: "omar", name: "Omar", gender: "male", vibe: "Thoughtful and steady", colors: ["#7c3aed", "#0ea5e9", "#ddd6fe"], eleven: "cjVigY5qzO86Huf0OWal", pitch: 0.95, rate: 0.96 },
+  { id: "leo", name: "Leo", gender: "male", vibe: "Sharp and fast-paced", colors: ["#dc2626", "#d97706", "#fecdd3"], eleven: "CwhRBWXzGAHq8TQ4Fs17", pitch: 1, rate: 1.08 },
+];
+function character(id = getSettings().character) {
+  return CHARACTERS.find((c) => c.id === id) || CHARACTERS[0];
+}
+const LENGTHS = [
+  [5, "5 min", "Quick"],
+  [8, "8 min", "Standard"],
+  [15, "15 min", "Deep"],
+];
+const SLIDERS = {
+  know: { label: "Money knowledge", hint: "How well the client understands finance terms", stops: ["Beginner", "Basic", "Average", "Savvy", "Expert"] },
+  numbers: { label: "Knows their numbers", hint: "How organized they are about their own finances", stops: ["No idea", "Rough idea", "Mostly", "Organized", "Spreadsheet-level"] },
+  worry: { label: "Worry level", hint: "How stressed they are about money", stops: ["Calm", "A little", "Some", "Stressed", "Very anxious"] },
+  interest: { label: "Buyer interest", hint: "How open the buyer is at the start", stops: ["Cold", "Skeptical", "Neutral", "Curious", "Eager"] },
+};
+const sliderHTML = (key, val) => {
+  const s = SLIDERS[key];
+  return `<div class="slider-field"><div class="spread"><span class="sl-label">${s.label}</span><strong class="sl-val" id="sl-${key}">${s.stops[val - 1]}</strong></div>
+    <input type="range" min="1" max="5" step="1" value="${val}" data-slider="${key}" aria-label="${s.label}" style="--fill:${((val - 1) / 4) * 100}%">
+    <div class="spread small muted"><span>${s.stops[0]}</span><span>${s.stops[4]}</span></div></div>`;
+};
+
 function renderPracticeSetup() {
-  const o = Object.assign({ interviewType: "behavioral", count: 5, fpRole: "planner", sales: "random", app: 0, product: "", persona: "fair", difficulty: "adaptive" }, P.opts);
+  const o = Object.assign({ interviewType: "behavioral", minutes: 8, fpRole: "planner", sales: "random", app: 0, product: "", persona: "fair", difficulty: "adaptive", warmup: true, roleText: "", jobAd: "", know: 2, numbers: 2, worry: 3, interest: 3 }, P.opts);
   P.opts = o;
+  const ch = character();
   const roles = allRoles()
     .filter(({ r }) => r.eligibility.status !== "ineligible")
     .sort((a, b) => (tracker()[b.r.id] ? 1 : 0) - (tracker()[a.r.id] ? 1 : 0));
   const adaptive = adaptiveLevel(P.mode === "fp" && o.fpRole === "candidate" ? "interview" : P.mode === "fp" ? "fpclient" : P.mode);
   const hist = sessions().slice(0, 6);
   const opt = (name, val, cur) => `<option value="${esc(val)}" ${String(cur) === String(val) ? "selected" : ""}>${esc(name)}</option>`;
+  const isInterview = P.mode === "interview" || (P.mode === "fp" && o.fpRole === "candidate");
+  const seg = (attr, items, cur) => `<div class="segmented">${items.map(([v, l, sub]) => `<button data-${attr}="${v}" class="${String(cur) === String(v) ? "on" : ""}">${l}${sub ? `<span class="seg-sub">${sub}</span>` : ""}</button>`).join("")}</div>`;
+  const section = (ic, title, sub, body) => `<div class="ps-row"><div class="ps-head">${icon(ic)}<div><strong>${title}</strong>${sub ? `<span class="small muted">${sub}</span>` : ""}</div></div>${body}</div>`;
 
-  const modeOptions = {
-    interview: `
-      <label class="field"><span>Interview type</span><select data-o="interviewType">${INTERVIEW_TYPES.map(([v, l]) => opt(l, v, o.interviewType)).join("")}</select></label>
-      ${o.interviewType === "program" ? `<label class="field"><span>Program</span><select data-o="roleId">${roles.map(({ r, c }) => opt(`${tracker()[r.id] ? "★ " : ""}${r.org || c.name} — ${r.title}`, r.id, o.roleId)).join("")}</select></label>` : ""}
-      <label class="field"><span>Questions</span><div class="segmented">${[3, 5, 8].map((n) => `<button data-count="${n}" class="${o.count === n ? "on" : ""}">${n}</button>`).join("")}</div></label>`,
-    fp: `
-      <label class="field"><span>Your role</span><div class="segmented"><button data-fprole="planner" class="${o.fpRole === "planner" ? "on" : ""}">I'm the planner</button><button data-fprole="candidate" class="${o.fpRole === "candidate" ? "on" : ""}">I'm the candidate</button></div></label>
-      <p class="small muted">${o.fpRole === "planner" ? "Meet a new client. They won't volunteer everything — ask good questions, then give clear, suitable advice." : "A conversational interview for a financial-planning internship, with technical and behavioral questions."}</p>`,
-    sales: `
-      <label class="field"><span>What are you selling?</span><div class="segmented"><button data-sales="random" class="${o.sales === "random" ? "on" : ""}">Random</button><button data-sales="apps" class="${o.sales === "apps" ? "on" : ""}">My apps</button><button data-sales="choose" class="${o.sales === "choose" ? "on" : ""}">I choose</button></div></label>
-      ${o.sales === "apps" ? `<label class="field"><span>App</span><select data-o="app">${MY_APPS.map(([, l], i) => opt(l, i, o.app)).join("")}</select></label>` : ""}
-      ${o.sales === "choose" ? `<p class="small muted">Just start talking and pitch anything — the buyer figures out what it is from you.</p>` : o.sales === "random" ? `<p class="small muted">The buyer and product are revealed when you start.</p>` : ""}`,
-    networking: `<label class="field"><span>Who you're talking to</span><select data-o="persona">${PERSONAS.map((p) => opt(p.label, p.id, o.persona)).join("")}</select></label>`,
+  const modeRows = {
+    interview: [
+      section("briefcase", "Interview type", "", `<select data-o="interviewType">${INTERVIEW_TYPES.map(([v, l]) => opt(l, v, o.interviewType)).join("")}</select>`),
+      o.interviewType === "program" ? section("target", "Program", "From your list", `<select data-o="roleId">${roles.map(({ r, c }) => opt(`${tracker()[r.id] ? "★ " : ""}${r.org || c.name} — ${r.title}`, r.id, o.roleId)).join("")}</select>`) : section("target", "Role or company", "Optional", `<input data-t="roleText" value="${esc(o.roleText)}" placeholder="e.g. Financial analyst intern at a fintech" maxlength="120">`),
+    ],
+    fp: [
+      section("users", "Your role", "", seg("fprole", [["planner", "I'm the planner"], ["candidate", "I'm the candidate"]], o.fpRole)),
+      o.fpRole === "planner"
+        ? section("trend", "The client", "Shape who walks in", ["know", "numbers", "worry"].map((k) => sliderHTML(k, o[k])).join(""))
+        : section("target", "Role or company", "Optional", `<input data-t="roleText" value="${esc(o.roleText)}" placeholder="e.g. Financial planning intern" maxlength="120">`),
+    ],
+    sales: [
+      section("target", "What are you selling?", "", seg("sales", [["random", "Random"], ["apps", "My apps"], ["choose", "I choose"]], o.sales)),
+      o.sales === "apps" ? section("layers", "App", "", `<select data-o="app">${MY_APPS.map(([, l], i) => opt(l, i, o.app)).join("")}</select>`) : "",
+      section("users", "The buyer", o.sales === "choose" ? "Just start pitching — they'll figure out what it is" : "", sliderHTML("interest", o.interest)),
+    ],
+    networking: [section("users", "Who you're talking to", "", `<select data-o="persona">${PERSONAS.map((p) => opt(p.label, p.id, o.persona)).join("")}</select>`)],
   }[P.mode];
 
   app.innerHTML = `
     <a class="back" href="#study">‹ Study</a>
-    <div class="page-head"><div><div class="eyebrow">Practice</div><h1>Talk it through</h1><p class="muted">Spoken, hands-free practice. Pause for about two seconds and your turn sends automatically. At the end you get a full analysis of your wording, tone and delivery.</p></div></div>
     <div class="mode-tabs">${MODES.map((m) => `<button data-mode="${m.id}" class="mode-tab ${P.mode === m.id ? "on" : ""}">${icon(m.icon)}<span><strong>${m.label}</strong><span class="small muted">${m.blurb}</span></span></button>`).join("")}</div>
+    <section class="ps-hero">
+      <div class="ps-copy"><div class="eyebrow">Spoken practice</div><h1>Rehearse it out loud,<br><span class="accent-text">then get coached.</span></h1>
+        <p class="muted" id="ch-blurb">${esc(ch.name)} ${P.mode === "fp" && o.fpRole === "planner" ? "plays your client" : P.mode === "sales" ? "plays your buyer" : P.mode === "networking" ? "plays who you're meeting" : "interviews you"} — ${esc(ch.vibe.toLowerCase())}. Talk naturally; your answer sends when you pause.</p></div>
+      <div class="ps-stage"><div class="orb-host" id="ps-orb"></div><button class="btn hear" id="ch-hear">${icon("play")} Hear ${esc(ch.name)}</button></div>
+      <div class="ch-row" id="ch-row">${CHARACTERS.map((c) => `<button class="ch ${c.id === ch.id ? "on" : ""}" data-ch="${c.id}" title="${esc(c.vibe)}"><span class="ch-dot" style="--c1:${c.colors[0]};--c2:${c.colors[1]};--c3:${c.colors[2]}"></span><span class="ch-name">${c.name}</span></button>`).join("")}</div>
+    </section>
     <div class="practice-setup">
-      <section class="card">
-        <h2>Scenario</h2>${modeOptions}
-        <label class="field"><span>Difficulty</span><div class="segmented">${["adaptive", "easy", "realistic", "tough"].map((d) => `<button data-diff="${d}" class="${o.difficulty === d ? "on" : ""}">${d === "adaptive" ? `Adaptive · ${LEVEL_LABEL[adaptive]}` : LEVEL_LABEL[d]}</button>`).join("")}</div></label>
-        <button class="btn primary block" id="pr-start">${icon("mic")} Start conversation</button>
-        ${AI.enabled() ? "" : `<p class="small muted">No Claude key on this device, so the built-in practice partner runs the conversation (fixed questions, simpler feedback). Add your key in <a href="#settings">Settings</a> for a fully adaptive partner.</p>`}
+      <section class="card ps-card">
+        ${modeRows.join("")}
+        ${section("gauge", "Length", "", seg("min", LENGTHS, o.minutes))}
+        ${section("flame", "Style", { adaptive: "Matches your recent scores", easy: "Gives you openings", realistic: "Like a normal first round", tough: "Presses for details" }[o.difficulty], seg("diff", [["adaptive", "Adaptive", LEVEL_LABEL[adaptive]], ["easy", "Friendly"], ["realistic", "Realistic"], ["tough", "Tough"]], o.difficulty))}
+        ${
+          isInterview
+            ? `<details class="ps-more" ${o.jobAd ? "open" : ""}><summary>More options: warm-up and job ad</summary>
+            <label class="toggle-row"><span><strong>Warm-up question</strong><span class="small muted">Start with “Tell me about yourself”</span></span><input type="checkbox" data-check="warmup" ${o.warmup ? "checked" : ""}></label>
+            <label class="field"><span>Paste a job ad (optional)</span><textarea data-t="jobAd" rows="4" placeholder="Paste the posting — questions will target it">${esc(o.jobAd)}</textarea></label></details>`
+            : ""
+        }
+        ${AI.enabled() ? "" : `<p class="small muted">No Claude key on this device — the built-in partner runs it (set questions, simpler feedback). Add your key in <a href="#settings">Settings</a> for a fully adaptive partner.</p>`}
         ${SR ? "" : `<p class="small bad-text">${icon("alert")} This browser can't do speech-to-text. Use Chrome or Edge on your PC/Mac, or Safari on iPhone — or type your replies.</p>`}
       </section>
-      <section class="card">${micCheckHTML()}</section>
+      <section class="card"><details class="ps-mic"><summary>${icon("mic")} Mic & voice settings</summary>${micCheckHTML()}</details>
+        <div class="ps-points">${[["check", "Listens through pauses — sends when you finish"], ["check", AI.enabled() ? "Adapts to what you actually say" : "Works without an API key"], ["check", "Scores every answer at the end"]].map(([i, t]) => `<div>${icon(i)} ${t}</div>`).join("")}</div></section>
     </div>
     ${progressCardHTML()}
-    ${hist.length ? `<section class="card"><h2>Recent sessions</h2><div class="list compact">${hist.map((s, i) => `<a class="list-row" href="${sessionHref(s, i)}">${ring(s.score, { size: 40 })}<div class="grow"><div class="row-title">${esc(s.label)}</div><div class="small muted">${new Date(s.at).toLocaleDateString()} · ${LEVEL_LABEL[s.difficulty] || ""}${s.thread ? " · replay" : ""}</div></div><span class="chev">${icon("chevron")}</span></a>`).join("")}</div></section>` : ""}`;
+    ${hist.length ? `<section class="card"><h2>Recent sessions</h2><div class="list compact">${hist.map((s, i) => `<a class="list-row" href="${sessionHref(s, i)}">${ring(s.score, { size: 40 })}<div class="grow"><div class="row-title">${esc(s.label)}</div><div class="small muted">${new Date(s.at).toLocaleDateString()} · ${LEVEL_LABEL[s.difficulty] || ""}${s.thread ? " · replay" : ""}</div></div><span class="chev">${icon("chevron")}</span></a>`).join("")}</div></section>` : ""}
+    <div class="start-bar"><button class="btn primary" id="pr-start">Start with ${esc(ch.name)} ${icon("arrow")}</button></div>`;
 
+  // Structural changes re-render; small ones update in place (so the 3D orb keeps running).
   const set = (patch) => {
     Object.assign(P.opts, patch);
     route.quiet = true;
     rerenderKeepScroll();
   };
+  const seg1 = (attr, key, cast = (v) => v) =>
+    app.querySelectorAll(`[data-${attr}]`).forEach((b) =>
+      b.addEventListener("click", () => {
+        P.opts[key] = cast(b.dataset[attr]);
+        b.parentElement.querySelectorAll("button").forEach((x) => x.classList.toggle("on", x === b));
+        if (window.gsap && !Motion.reduced) gsap.fromTo(b, { scale: 0.94 }, { scale: 1, duration: 0.35, ease: "back.out(3)" });
+        if (key === "difficulty") b.closest(".ps-row").querySelector(".ps-head .small").textContent = { adaptive: "Matches your recent scores", easy: "Gives you openings", realistic: "Like a normal first round", tough: "Presses for details" }[P.opts.difficulty];
+      })
+    );
   app.querySelectorAll("[data-mode]").forEach((b) => b.addEventListener("click", () => ((P.mode = b.dataset.mode), set({}))));
   app.querySelectorAll("[data-o]").forEach((s) => s.addEventListener("change", () => set({ [s.dataset.o]: s.value })));
-  app.querySelectorAll("[data-count]").forEach((b) => b.addEventListener("click", () => set({ count: +b.dataset.count })));
+  app.querySelectorAll("[data-t]").forEach((s) => s.addEventListener("input", () => (P.opts[s.dataset.t] = s.value)));
+  app.querySelectorAll("[data-check]").forEach((s) => s.addEventListener("change", () => (P.opts[s.dataset.check] = s.checked)));
   app.querySelectorAll("[data-fprole]").forEach((b) => b.addEventListener("click", () => set({ fpRole: b.dataset.fprole })));
   app.querySelectorAll("[data-sales]").forEach((b) => b.addEventListener("click", () => set({ sales: b.dataset.sales })));
-  app.querySelectorAll("[data-diff]").forEach((b) => b.addEventListener("click", () => set({ difficulty: b.dataset.diff })));
+  seg1("min", "minutes", Number);
+  seg1("diff", "difficulty");
+  app.querySelectorAll("[data-slider]").forEach((r) =>
+    r.addEventListener("input", () => {
+      const k = r.dataset.slider;
+      P.opts[k] = +r.value;
+      r.style.setProperty("--fill", ((r.value - 1) / 4) * 100 + "%");
+      const lbl = document.getElementById("sl-" + k);
+      lbl.textContent = SLIDERS[k].stops[r.value - 1];
+      if (window.gsap && !Motion.reduced) gsap.fromTo(lbl, { y: -4, opacity: 0.4 }, { y: 0, opacity: 1, duration: 0.3, ease: "power2.out" });
+    })
+  );
+  // Characters + their 3D orb
+  const host = document.getElementById("ps-orb");
+  Orb3D.mount(host, { colors: ch.colors, state: "idle" });
+  app.querySelectorAll("[data-ch]").forEach((b) =>
+    b.addEventListener("click", () => {
+      const c = character(b.dataset.ch);
+      Store.set("settings", { ...getSettings(), character: c.id });
+      app.querySelectorAll("[data-ch]").forEach((x) => x.classList.toggle("on", x === b));
+      Orb3D.current?.setColors(c.colors);
+      Orb3D.current?.pulse(1.2);
+      document.getElementById("ch-hear").innerHTML = `${icon("play")} Hear ${esc(c.name)}`;
+      document.getElementById("pr-start").innerHTML = `Start with ${esc(c.name)} ${icon("arrow")}`;
+      const bl = document.getElementById("ch-blurb");
+      bl.textContent = bl.textContent.replace(/^\S+/, c.name).replace(/— [^.]+\./, `— ${c.vibe.toLowerCase()}.`);
+      if (window.gsap && !Motion.reduced) gsap.fromTo(b.querySelector(".ch-dot"), { scale: 0.8 }, { scale: 1, duration: 0.5, ease: "elastic.out(1,0.45)" });
+      b.scrollIntoView({ block: "nearest", inline: "center", behavior: "smooth" });
+    })
+  );
+  document.getElementById("ch-hear").addEventListener("click", async (e) => {
+    Voice.unlock();
+    const c = character();
+    const btn = e.currentTarget;
+    btn.disabled = true;
+    Orb3D.current?.setState("speaking");
+    await Voice.speak(`Hi Mason, I'm ${c.name}. ${P.mode === "fp" && P.opts.fpRole === "planner" ? "Thanks for meeting with me. I really need some help getting my money organized." : "Thanks for coming in today. So, tell me a little about yourself."}`, { persona: c, onWord: (v) => Orb3D.current?.pulse(v) });
+    Orb3D.current?.setState("idle");
+    if (btn.isConnected) btn.disabled = false;
+  });
   wireMicCheck();
   document.getElementById("pr-start")?.addEventListener("click", (e) => startPractice(e.currentTarget, adaptive));
+  if (window.gsap && !Motion.reduced) {
+    gsap.from(app.querySelectorAll(".ps-copy > *"), { y: 18, autoAlpha: 0, duration: 0.6, stagger: 0.08, ease: "power3.out" });
+    gsap.from(app.querySelectorAll(".ch"), { y: 14, autoAlpha: 0, duration: 0.45, stagger: 0.04, ease: "power2.out", delay: 0.15 });
+    gsap.from(app.querySelectorAll(".ps-row"), { y: 14, autoAlpha: 0, duration: 0.45, stagger: 0.05, ease: "power2.out", delay: 0.2 });
+    Motion.ensureVisible([...app.querySelectorAll(".ps-copy > *, .ch, .ps-row")], 2200);
+  }
 }
 
 // ---------- mic + voice check (also used in Settings) ----------
@@ -350,17 +460,13 @@ const LiveFX = {
     g.fromTo(el.children, { opacity: 0.18, y: 4 }, { opacity: 1, y: 0, duration: 0.35, ease: "power2.out", stagger: Math.min(0.32, 9 / Math.max(ws.length, 1)) });
     Motion.ensureVisible([...el.children], Math.min(9000, ws.length * 330 + 1500));
   },
+  // The 3D orb shows who's talking; the old initials avatar is only the no-WebGL fallback.
   speaking(on) {
-    const g = this.g();
-    const av = document.getElementById("lv-avatar");
-    av?.classList.toggle("talking", on);
-    if (!g || !av) return;
-    g.killTweensOf(av, "scale"); // only the pulse — never the entrance fade
-    g.set(av, { autoAlpha: 1 });
-    if (on) g.to(av, { scale: 1.05, duration: 0.55, ease: "sine.inOut", yoyo: true, repeat: -1 });
-    else g.to(av, { scale: 1, duration: 0.3, ease: "power2.out" });
+    Orb3D.current?.setState(on ? "speaking" : "idle");
+    document.getElementById("lv-avatar")?.classList.toggle("talking", on);
   },
   orb(state) {
+    Orb3D.current?.setState({ speaking: "speaking", live: "listening", thinking: "thinking" }[state] || "idle");
     const g = this.g();
     const orb = document.getElementById("lv-you");
     const wave = document.getElementById("lv-wave");
@@ -390,6 +496,7 @@ const LiveFX = {
     Motion.ensureVisible([...app.querySelectorAll(".metric, .improve")], 2500);
   },
   heard() {
+    Orb3D.current?.pulse(0.45);
     const g = this.g();
     const el = document.getElementById("lv-you-text");
     if (g && el) g.fromTo(el, { autoAlpha: 0.55 }, { autoAlpha: 1, duration: 0.25, overwrite: true });
@@ -409,10 +516,16 @@ async function startPractice(btn, adaptive) {
   const difficulty = o.difficulty === "adaptive" ? adaptive : o.difficulty;
   await busy(btn, async () => {
     const role = o.interviewType === "program" && findRole(o.roleId);
+    const ch = character();
     const setupOpts = {
       interviewType: P.mode === "fp" ? "financial planning" : o.interviewType === "program" ? "program-specific" : o.interviewType,
-      role: role ? `${role.r.org || role.c.name} — ${role.r.title}. ${role.r.about || ""}` : "",
-      count: P.mode === "fp" ? 5 : o.count,
+      role: role ? `${role.r.org || role.c.name} — ${role.r.title}. ${role.r.about || ""}` : (o.roleText || "").trim(),
+      minutes: o.minutes || 8,
+      warmup: o.warmup !== false,
+      jobAd: (o.jobAd || "").trim().slice(0, 4000),
+      client: { know: o.know, numbers: o.numbers, worry: o.worry },
+      interest: o.interest,
+      character: ch,
       product: o.sales === "choose" ? "choose" : o.sales === "apps" ? MY_APPS[o.app][0] : RANDOM_PRODUCTS[Math.floor(Math.random() * RANDOM_PRODUCTS.length)],
       persona: PERSONAS.find((p) => p.id === o.persona)?.who,
       difficulty,
@@ -430,7 +543,11 @@ async function startPractice(btn, adaptive) {
     } else log.push("no Claude key — using the built-in practice partner");
     sc ||= OFFLINE.setup(kind, setupOpts, difficulty);
     if (o.sales === "choose" && P.mode === "sales") sc.opening = "";
-    Object.assign(P, { kind, difficulty, sc, setupOpts, thread: [], phase: "live", started: Date.now(), result: null, typing: !SR, micBlocked: false, pending: "", status: "", caption: "", orb: "tap", speaking: false, thinking: false, ending: false, log: [], seed: Math.random().toString(36).slice(2) });
+    // The chosen character plays the part (their name, voice and orb).
+    const last = String(sc.counterpart?.name || "").split(" ").slice(1).join(" ");
+    sc.counterpart = { ...(sc.counterpart || {}), name: `${ch.name}${last ? " " + last : ""}`, gender: ch.gender };
+    if (sc.opening) sc.opening = sc.opening.replace(/\b(I'm|I am|my name is)\s+[A-Z][a-z]+/, `$1 ${ch.name}`);
+    Object.assign(P, { persona: ch, minutes: setupOpts.minutes, kind, difficulty, sc, setupOpts, thread: [], phase: "live", started: Date.now(), result: null, typing: !SR, micBlocked: false, pending: "", status: "", caption: "", orb: "tap", speaking: false, thinking: false, ending: false, log: [], seed: Math.random().toString(36).slice(2) });
     log.forEach(plog);
     plog(`device: ${IS_IOS ? "iPhone/iPad" : "computer"} · speech-to-text ${SR ? "available" : "NOT available"} · voice ${Eleven.enabled() ? "ElevenLabs" : "device"}`);
     renderLive();
@@ -446,9 +563,10 @@ function renderLive() {
   app.innerHTML = `
     <div class="live-top"><div><div class="eyebrow">${esc(practiceLabel())} · ${LEVEL_LABEL[P.difficulty]} <span class="pill" id="lv-mode" ${sc.offline ? "" : "hidden"}>Built-in partner</span></div><h1 class="live-title">${esc(sc.title)}</h1></div>
       <div class="row"><span class="pill mono" id="lv-clock">0:00</span><button class="btn" id="lv-end">${icon("stop")} End & analyze</button></div></div>
+    <div class="lv-progress"><i id="lv-prog"></i></div>
     <div class="live">
       <section class="card stage">
-        <div class="avatar" id="lv-avatar"><span>${esc(initials)}</span></div>
+        <div class="orb-host live-orb" id="lv-avatar"><div class="avatar"><span>${esc(initials)}</span></div></div>
         <div class="who"><strong>${esc(sc.counterpart.name)}</strong><span class="muted small">${esc(sc.counterpart.role)}</span></div>
         <div class="caption" id="lv-caption"></div>
         <div class="status-row"><div class="lv-dots" id="lv-dots" hidden><i></i><i></i><i></i></div><div class="status" id="lv-status"></div></div>
@@ -469,18 +587,33 @@ function renderLive() {
   drawTranscript();
   document.getElementById("lv-caption").textContent = P.caption || "";
   document.getElementById("lv-log").textContent = (P.log || []).join("\n");
+  Orb3D.mount(document.getElementById("lv-avatar"), { colors: (P.persona || character()).colors, state: { speaking: "speaking", live: "listening", thinking: "thinking" }[P.orb] || "idle" });
   setStatus(P.status || "");
   clearInterval(renderLive._clock);
   // Clock + watchdogs: nothing can stay stuck.
   renderLive._clock = setInterval(() => {
     const el = document.getElementById("lv-clock");
     if (!el) return clearInterval(renderLive._clock);
+    // Countdown to the chosen length; the partner wraps up when time is up.
     const s = Math.floor((Date.now() - P.started) / 1000);
-    el.textContent = `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`;
+    const total = (P.minutes || 8) * 60;
+    const left = total - s;
+    el.textContent = left >= 0 ? `${Math.floor(left / 60)}:${String(left % 60).padStart(2, "0")} left` : `+${Math.floor(-left / 60)}:${String(-left % 60).padStart(2, "0")} over`;
+    el.classList.toggle("warn-text", left < 60);
+    const prog = document.getElementById("lv-prog");
+    if (prog) prog.style.width = Math.min(100, (s / total) * 100) + "%";
     if (P.phase !== "live") return;
+    if (left < -90 && !P.ending) {
+      plog("time is well past — the next reply wraps up");
+      P.ending = "soon";
+    }
     if (P.speaking && Date.now() - P.speakSince > 75000) {
       plog("watchdog: speech never finished — moving on");
       Voice.cancel();
+    }
+    if (P.listening && P.listener?.active && !P.nudged && !P.listener.text() && Date.now() - (P.listenSince || 0) > 15000) {
+      P.nudged = true;
+      setStatus("Still listening — go ahead whenever you're ready. (Nothing heard yet: check the mic, or tap Type instead.)", "live");
     }
     if (P.listening && P.listener && !P.listener.active && Date.now() - (P.listenSince || 0) > 2500) {
       plog("watchdog: mic stopped without telling us");
@@ -601,7 +734,7 @@ async function say(text) {
   LiveFX.speaking(true);
   plog(`${P.sc.counterpart.name.split(" ")[0]} speaks (${text.split(/\s+/).length} words)`);
   try {
-    await Voice.speak(text, { gender: P.sc.counterpart.gender, seed: P.seed + P.sc.counterpart.name });
+    await Voice.speak(text, { persona: P.persona, gender: P.sc.counterpart.gender, seed: P.seed + P.sc.counterpart.name, onWord: (v) => Orb3D.current?.pulse(v) });
   } catch (e) {
     plog("voice error: " + e.message);
   }
@@ -682,6 +815,8 @@ function listen() {
     },
   });
   P.listener = me;
+  setStatus("Starting the mic…");
+  P.nudged = false;
   me.start();
 }
 
@@ -702,7 +837,8 @@ async function onMyTurn(text, duration) {
     const t0 = Date.now();
     try {
       // One quick retry for a hiccup, then fall back so the conversation never stops.
-      r = await AI.practiceTurn(P.sc, P.thread, P.kind, P.difficulty).catch((e) => (e.status === 401 || e.status === 403 || /credit/i.test(e.message) ? Promise.reject(e) : AI.practiceTurn(P.sc, P.thread, P.kind, P.difficulty)));
+      const timing = () => ({ elapsed: (Date.now() - P.started) / 60000, minutes: P.minutes });
+      r = await AI.practiceTurn(P.sc, P.thread, P.kind, P.difficulty, timing()).catch((e) => (e.status === 401 || e.status === 403 || /credit/i.test(e.message) ? Promise.reject(e) : AI.practiceTurn(P.sc, P.thread, P.kind, P.difficulty, timing())));
       plog(`Claude replied in ${((Date.now() - t0) / 1000).toFixed(1)}s`);
     } catch (e) {
       plog("Claude failed: " + e.message);
@@ -712,7 +848,7 @@ async function onMyTurn(text, duration) {
   if (P.phase !== "live") return void (P.thinking = false);
   if (!r) {
     await wait(500); // a natural beat before the built-in partner answers
-    r = OFFLINE.turn(P.sc, P.thread, P.kind);
+    r = OFFLINE.turn(P.sc, P.thread, P.kind, { elapsed: (Date.now() - P.started) / 60000, minutes: P.minutes, opts: P.setupOpts });
   }
   P.thinking = false;
   if (r.end) P.ending = true;
@@ -789,6 +925,13 @@ function renderPracticeResult(saved) {
       </div>
       <p>${esc(r.tone)}</p>
     </section>
+    ${
+      r.answers?.length
+        ? `<section class="card"><h2>Answer by answer</h2><div class="answers">${r.answers
+            .map((a, i) => `<div class="answer-row"><div class="ans-num">${i + 1}</div><div class="grow"><div class="small muted">${esc(a.prompt || "")}</div><div class="quote">“${esc(a.quote || "")}”</div><div class="small">${icon("bulb")} ${esc(a.tip || "")}</div></div>${ring(Math.round(a.score || 0), { size: 46 })}</div>`)
+            .join("")}</div></section>`
+        : ""
+    }
     <div class="two-col">
       <section class="card"><h2>What worked</h2><ul>${r.strengths.map((x) => `<li>${esc(x)}</li>`).join("")}</ul><div class="callout practice"><strong>Next drill</strong><p>${esc(r.nextDrill)}</p></div></section>
       <section class="card"><h2>How to get better</h2>${r.improvements.map((x) => `<div class="improve"><strong>${esc(x.issue)}</strong><div class="quote">“${esc(x.quote)}”</div><div class="better">${icon("arrow")} ${esc(x.better)}</div></div>`).join("")}</section>
