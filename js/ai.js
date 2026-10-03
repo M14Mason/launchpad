@@ -38,9 +38,15 @@ const AI = {
     return `MASON'S VERIFIED DATA\n${resume}\n\nHobbies: ${PROFILE.hobbies.join(", ")}\n\nMASON'S OWN SKILL BANK ANSWERS\n${answers || "(none yet)"}`;
   },
 
-  async ask(prompt, { effort = "low", maxTokens = 4000, webSearch = false } = {}) {
+  // Older saved model choices map to their current successors.
+  model() {
+    const m = getSettings().model;
+    return { "claude-opus-5": "claude-opus-5-5", "claude-sonnet-5": "claude-sonnet-5-5" }[m] || (/^claude-/.test(m || "") ? m : "claude-opus-5-5");
+  },
+
+  async ask(prompt, { effort = "low", maxTokens = 4000, webSearch = false, timeout = 120000 } = {}) {
     const client = await this.client();
-    const { model } = getSettings();
+    const model = this.model();
     const params = {
       model,
       max_tokens: maxTokens,
@@ -49,23 +55,30 @@ const AI = {
       output_config: { effort },
     };
     if (webSearch) params.tools = [{ type: "web_search_20260209", name: "web_search", max_uses: 6 }];
+    const withFallback = /^claude-(opus-5|sonnet-5-5|fable)/.test(model);
 
     let msg;
     // Server tools can pause a long turn; send it back to let Claude continue.
     for (let i = 0; i < 4; i++) {
       try {
-        msg =
-          model === "claude-opus-5"
-            ? await client.beta.messages.create({ ...params, betas: ["server-side-fallback-2026-07-01"], fallbacks: "default" })
-            : await client.messages.create(params);
+        msg = withFallback
+          ? await client.beta.messages.create({ ...params, betas: ["server-side-fallback-2026-07-01"], fallbacks: "default" }, { timeout })
+          : await client.messages.create(params, { timeout });
       } catch (e) {
-        const friendly = {
-          401: "Your Claude API key was rejected — check it in Settings.",
-          403: "This API key doesn't have access to that model — try Sonnet 5 in Settings.",
-          429: "Too many requests right now — wait a minute and try again.",
-          529: "Claude is overloaded right now — try again in a minute.",
-        }[e.status];
-        throw new Error(friendly || (e.status >= 500 ? "Claude's servers had a problem — try again." : e.status ? `Request failed (${e.status}).` : "Couldn't reach Claude — check your internet connection."));
+        const detail = String(e?.error?.error?.message || e?.message || "");
+        const friendly = /credit balance/i.test(detail)
+          ? "Your Anthropic account is out of credit — add credit at console.anthropic.com → Billing."
+          : /model/i.test(detail) && (e.status === 404 || e.status === 400)
+            ? "That Claude model isn't available to your key — pick another model in Settings."
+            : {
+                401: "Your Claude API key was rejected — check it in Settings.",
+                403: "This API key doesn't have access to that model — try Sonnet in Settings.",
+                429: "Too many requests right now — wait a minute and try again.",
+                529: "Claude is overloaded right now — try again in a minute.",
+              }[e.status];
+        const err = new Error(friendly || (/timed? ?out/i.test(detail) ? "Claude took too long to answer." : e.status >= 500 ? "Claude's servers had a problem — try again." : e.status ? `Request failed (${e.status}${detail ? ": " + detail.slice(0, 120) : ""}).` : "Couldn't reach Claude — check your internet connection."));
+        err.status = e.status;
+        throw err;
       }
       if (msg.stop_reason !== "pause_turn") break;
       params.messages = [...params.messages, { role: "assistant", content: msg.content }];
@@ -386,7 +399,7 @@ Return ONLY JSON:
  "hidden": "private notes only you see: situation, goals, objections, question plan",
  "objectives": ["3-5 things a great performance does in this scenario"],
  "maxTurns": number between 6 and 16}`,
-      { effort: "medium", maxTokens: 3000 }
+      { effort: "low", maxTokens: 3000, timeout: 60000 }
     );
     const j = this.parseJSON(text, null);
     if (!j || !j.counterpart || typeof j.brief !== "string") throw new Error("Couldn't set up the scenario — try again.");
@@ -402,7 +415,7 @@ Rules: stay fully in character. This is spoken aloud by a realistic voice, so so
 Transcript:
 ${thread.map((t) => `${t.from === "me" ? "Mason" : sc.counterpart.name}: ${t.text}`).join("\n")}
 Return ONLY JSON: {"reply": "what you say next", "end": true/false}`,
-      { effort: "low", maxTokens: 1200 }
+      { effort: "low", maxTokens: 1200, timeout: 40000 }
     );
     const j = this.parseJSON(text, null);
     if (!j || typeof j.reply !== "string") throw new Error("Lost the conversation for a second — say that again?");

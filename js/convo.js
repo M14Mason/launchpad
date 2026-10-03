@@ -87,7 +87,8 @@ function renderPracticeSetup() {
       <section class="card">
         <h2>Scenario</h2>${modeOptions}
         <label class="field"><span>Difficulty</span><div class="segmented">${["adaptive", "easy", "realistic", "tough"].map((d) => `<button data-diff="${d}" class="${o.difficulty === d ? "on" : ""}">${d === "adaptive" ? `Adaptive · ${LEVEL_LABEL[adaptive]}` : LEVEL_LABEL[d]}</button>`).join("")}</div></label>
-        ${AI.enabled() ? `<button class="btn primary block" id="pr-start">${icon("mic")} Start conversation</button>` : `<div class="notice info">Needs your Claude API key — add it in <a href="#settings">Settings</a>.</div>`}
+        <button class="btn primary block" id="pr-start">${icon("mic")} Start conversation</button>
+        ${AI.enabled() ? "" : `<p class="small muted">No Claude key on this device, so the built-in practice partner runs the conversation (fixed questions, simpler feedback). Add your key in <a href="#settings">Settings</a> for a fully adaptive partner.</p>`}
         ${SR ? "" : `<p class="small bad-text">${icon("alert")} This browser can't do speech-to-text. Use Chrome or Edge on your PC/Mac, or Safari on iPhone — or type your replies.</p>`}
       </section>
       <section class="card">${micCheckHTML()}</section>
@@ -298,13 +299,114 @@ function practiceLabel() {
   return `Networking — ${PERSONAS.find((p) => p.id === o.persona)?.label}`;
 }
 
+// ---------- session log (shown under "Connection details" so problems are visible, not mysterious) ----------
+function plog(msg) {
+  const t = P.started ? ((Date.now() - P.started) / 1000).toFixed(1) + "s" : "";
+  (P.log ||= []).push(`${t.padStart(6)}  ${msg}`);
+  if (P.log.length > 120) P.log.shift();
+  const el = document.getElementById("lv-log");
+  if (el) {
+    el.textContent = P.log.join("\n");
+    el.scrollTop = el.scrollHeight;
+  }
+}
+// Use Claude when it's available; otherwise (or if it fails) the built-in partner keeps the session going.
+function goOffline(reason) {
+  if (P.sc.offline) return;
+  const o = OFFLINE.setup(P.kind, P.setupOpts || {}, P.difficulty);
+  Object.assign(P.sc, { offline: true, questions: o.questions, step: Math.max(0, P.thread.filter((t) => t.from === "me").length - 1), followed: {}, revealed: [], product: P.sc.product || o.product });
+  plog("switched to built-in partner: " + reason);
+  toast("Claude isn't responding (" + reason + ") — continuing with the built-in practice partner.");
+  document.getElementById("lv-mode")?.removeAttribute("hidden");
+}
+
+// ---------- GSAP motion for the live session (all optional: works the same without GSAP) ----------
+const LiveFX = {
+  g() {
+    return !Motion.reduced && window.gsap;
+  },
+  enter() {
+    const g = this.g();
+    if (!g) return;
+    const q = (s) => app.querySelectorAll(s);
+    const tl = g.timeline({ defaults: { ease: "power3.out" } });
+    tl.from(q(".live-top > *"), { y: -14, autoAlpha: 0, duration: 0.5, stagger: 0.08 })
+      .from(q(".stage"), { y: 24, autoAlpha: 0, duration: 0.6 }, "<0.1")
+      .from(q("#lv-avatar"), { scale: 0.6, autoAlpha: 0, duration: 0.7, ease: "back.out(2.2)" }, "<0.15")
+      .from(q(".who, .you, .controls > *"), { y: 12, autoAlpha: 0, duration: 0.45, stagger: 0.06 }, "<0.2")
+      .from(q(".brief"), { x: 24, autoAlpha: 0, duration: 0.6 }, "<");
+    Motion.ensureVisible([...q(".live-top > *, .stage, #lv-avatar, .who, .you, .controls > *, .brief")], 2000);
+  },
+  // Words appear in time with the voice.
+  caption(text) {
+    const el = document.getElementById("lv-caption");
+    if (!el) return;
+    const g = this.g();
+    if (!g) return void (el.textContent = text);
+    const ws = String(text).split(/\s+/);
+    el.innerHTML = ws.map((w) => `<span class="w">${esc(w)} </span>`).join("");
+    g.killTweensOf(el.children);
+    // Words start faint (never invisible), so the caption stays readable even if animation frames stall.
+    g.fromTo(el.children, { opacity: 0.18, y: 4 }, { opacity: 1, y: 0, duration: 0.35, ease: "power2.out", stagger: Math.min(0.32, 9 / Math.max(ws.length, 1)) });
+    Motion.ensureVisible([...el.children], Math.min(9000, ws.length * 330 + 1500));
+  },
+  speaking(on) {
+    const g = this.g();
+    const av = document.getElementById("lv-avatar");
+    av?.classList.toggle("talking", on);
+    if (!g || !av) return;
+    g.killTweensOf(av, "scale"); // only the pulse — never the entrance fade
+    g.set(av, { autoAlpha: 1 });
+    if (on) g.to(av, { scale: 1.05, duration: 0.55, ease: "sine.inOut", yoyo: true, repeat: -1 });
+    else g.to(av, { scale: 1, duration: 0.3, ease: "power2.out" });
+  },
+  orb(state) {
+    const g = this.g();
+    const orb = document.getElementById("lv-you");
+    const wave = document.getElementById("lv-wave");
+    const dots = document.getElementById("lv-dots");
+    if (wave) wave.hidden = state !== "live";
+    if (dots) dots.hidden = state !== "thinking";
+    if (!g || !orb) return;
+    g.fromTo(orb, { scale: 0.86 }, { scale: 1, duration: 0.55, ease: "elastic.out(1, 0.5)" });
+    if (wave) {
+      g.killTweensOf(wave.children);
+      if (state === "live")
+        [...wave.children].forEach((b, i) => g.fromTo(b, { scaleY: 0.25 }, { scaleY: () => 0.35 + Math.random() * 0.65, duration: 0.28 + i * 0.04, ease: "sine.inOut", yoyo: true, repeat: -1, repeatRefresh: true }));
+    }
+    if (dots) {
+      g.killTweensOf(dots.children);
+      if (state === "thinking") g.fromTo(dots.children, { y: 0 }, { y: -6, duration: 0.35, ease: "sine.inOut", yoyo: true, repeat: -1, stagger: 0.12 });
+    }
+  },
+  results() {
+    const g = this.g();
+    if (!g) return;
+    const bars = [...app.querySelectorAll(".rubric-row .bar i")];
+    g.from(bars, { scaleX: 0, transformOrigin: "left center", duration: 1.1, ease: "power3.out", delay: 0.2, stagger: 0.06 });
+    Motion.ensureVisible(bars, 2500);
+    g.from(app.querySelectorAll(".metric"), { y: 16, autoAlpha: 0, duration: 0.5, stagger: 0.05, ease: "power2.out", delay: 0.3 });
+    g.from(app.querySelectorAll(".improve"), { x: 16, autoAlpha: 0, duration: 0.5, stagger: 0.08, ease: "power2.out", delay: 0.5 });
+    Motion.ensureVisible([...app.querySelectorAll(".metric, .improve")], 2500);
+  },
+  heard() {
+    const g = this.g();
+    const el = document.getElementById("lv-you-text");
+    if (g && el) g.fromTo(el, { autoAlpha: 0.55 }, { autoAlpha: 1, duration: 0.25, overwrite: true });
+  },
+  line() {
+    const g = this.g();
+    const last = document.querySelector("#lv-transcript p:last-child");
+    if (g && last) g.from(last, { x: -10, autoAlpha: 0, duration: 0.35, ease: "power2.out" });
+  },
+};
+
 async function startPractice(btn, adaptive) {
   // Unlock speech + audio on iOS/Safari inside the tap.
   Voice.unlock();
   const kind = practiceKind();
   const o = P.opts;
   const difficulty = o.difficulty === "adaptive" ? adaptive : o.difficulty;
-  // Audio measurement runs alongside speech recognition on PC/Mac. iPhone allows only one mic user, so it's skipped there.
   await busy(btn, async () => {
     const role = o.interviewType === "program" && findRole(o.roleId);
     const setupOpts = {
@@ -315,10 +417,24 @@ async function startPractice(btn, adaptive) {
       persona: PERSONAS.find((p) => p.id === o.persona)?.who,
       difficulty,
     };
-    const sc = await AI.practiceSetup(kind, setupOpts);
+    const log = [];
+    let sc = null;
+    if (AI.enabled()) {
+      try {
+        sc = await AI.practiceSetup(kind, setupOpts);
+        log.push("scenario written by Claude (" + AI.model() + ")");
+      } catch (e) {
+        log.push("Claude setup failed: " + e.message);
+        toast(e.message + " Using the built-in practice partner.");
+      }
+    } else log.push("no Claude key — using the built-in practice partner");
+    sc ||= OFFLINE.setup(kind, setupOpts, difficulty);
     if (o.sales === "choose" && P.mode === "sales") sc.opening = "";
-    Object.assign(P, { kind, difficulty, sc, thread: [], phase: "live", started: Date.now(), result: null, typing: !SR, status: "", caption: "", orb: "tap", speaking: false, thinking: false, ending: false, seed: Math.random().toString(36).slice(2) });
+    Object.assign(P, { kind, difficulty, sc, setupOpts, thread: [], phase: "live", started: Date.now(), result: null, typing: !SR, micBlocked: false, pending: "", status: "", caption: "", orb: "tap", speaking: false, thinking: false, ending: false, log: [], seed: Math.random().toString(36).slice(2) });
+    log.forEach(plog);
+    plog(`device: ${IS_IOS ? "iPhone/iPad" : "computer"} · speech-to-text ${SR ? "available" : "NOT available"} · voice ${Eleven.enabled() ? "ElevenLabs" : "device"}`);
     renderLive();
+    LiveFX.enter();
     if (sc.opening) say(sc.opening);
     else yourTurn();
   });
@@ -328,15 +444,17 @@ function renderLive() {
   const { sc } = P;
   const initials = sc.counterpart.name.split(" ").map((w) => w[0]).join("").slice(0, 2);
   app.innerHTML = `
-    <div class="live-top"><div><div class="eyebrow">${esc(practiceLabel())} · ${LEVEL_LABEL[P.difficulty]}</div><h1 class="live-title">${esc(sc.title)}</h1></div>
+    <div class="live-top"><div><div class="eyebrow">${esc(practiceLabel())} · ${LEVEL_LABEL[P.difficulty]} <span class="pill" id="lv-mode" ${sc.offline ? "" : "hidden"}>Built-in partner</span></div><h1 class="live-title">${esc(sc.title)}</h1></div>
       <div class="row"><span class="pill mono" id="lv-clock">0:00</span><button class="btn" id="lv-end">${icon("stop")} End & analyze</button></div></div>
     <div class="live">
       <section class="card stage">
         <div class="avatar" id="lv-avatar"><span>${esc(initials)}</span></div>
         <div class="who"><strong>${esc(sc.counterpart.name)}</strong><span class="muted small">${esc(sc.counterpart.role)}</span></div>
         <div class="caption" id="lv-caption"></div>
-        <div class="status" id="lv-status"></div>
-        <div class="you"><button type="button" class="you-orb" id="lv-you" aria-label="Tap to talk">${icon("mic")}</button><div class="you-hint" id="lv-hint"></div><div class="you-text" id="lv-you-text"></div></div>
+        <div class="status-row"><div class="lv-dots" id="lv-dots" hidden><i></i><i></i><i></i></div><div class="status" id="lv-status"></div></div>
+        <div class="you"><button type="button" class="you-orb" id="lv-you" aria-label="Tap to talk">${icon("mic")}</button>
+          <div class="lv-wave" id="lv-wave" hidden><i></i><i></i><i></i><i></i><i></i></div>
+          <div class="you-hint" id="lv-hint"></div><div class="you-text" id="lv-you-text"></div></div>
         <div class="row center controls">
           <button class="btn primary" id="lv-send">${icon("arrow")} Send now</button>
           <button class="btn" id="lv-pause">Pause</button>
@@ -345,20 +463,32 @@ function renderLive() {
         <div class="type-box" id="lv-typebox" ${P.typing ? "" : "hidden"}><textarea id="lv-text" placeholder="Type your reply…"></textarea><button class="btn primary" id="lv-typesend">Send</button></div>
       </section>
       <aside class="card brief"><h3>Your brief</h3><p>${esc(sc.brief)}</p><h4>What great looks like</h4><ul class="small">${(sc.objectives || []).map((x) => `<li>${esc(x)}</li>`).join("")}</ul>
-        <details><summary>Transcript</summary><div class="transcript" id="lv-transcript"></div></details></aside>
+        <details><summary>Transcript</summary><div class="transcript" id="lv-transcript"></div></details>
+        <details class="lv-logbox"><summary>Connection details</summary><pre id="lv-log"></pre><p class="small muted">If something goes wrong, this shows exactly what happened.</p></details></aside>
     </div>`;
   drawTranscript();
   document.getElementById("lv-caption").textContent = P.caption || "";
+  document.getElementById("lv-log").textContent = (P.log || []).join("\n");
   setStatus(P.status || "");
   clearInterval(renderLive._clock);
+  // Clock + watchdogs: nothing can stay stuck.
   renderLive._clock = setInterval(() => {
     const el = document.getElementById("lv-clock");
     if (!el) return clearInterval(renderLive._clock);
     const s = Math.floor((Date.now() - P.started) / 1000);
     el.textContent = `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`;
-    const you = document.getElementById("lv-you");
-    if (you) you.style.setProperty("--lvl", P.listening ? Math.max(0.15, Mic.level) : 0);
-  }, 80);
+    if (P.phase !== "live") return;
+    if (P.speaking && Date.now() - P.speakSince > 75000) {
+      plog("watchdog: speech never finished — moving on");
+      Voice.cancel();
+    }
+    if (P.listening && P.listener && !P.listener.active && Date.now() - (P.listenSince || 0) > 2500) {
+      plog("watchdog: mic stopped without telling us");
+      P.listening = false;
+      setOrb("tap");
+      setStatus("Tap the mic to keep talking.", "warn");
+    }
+  }, 250);
   document.getElementById("lv-end").onclick = () => endPractice();
   document.getElementById("lv-send").onclick = () => {
     if (P.listening) return P.listener?.flush();
@@ -372,10 +502,10 @@ function renderLive() {
   document.getElementById("lv-you").onclick = () => {
     Voice.unlock();
     if (P.speaking) {
-      // Interrupt and answer now (starting the mic inside this tap also works on iPhone).
+      plog("you interrupted");
       Voice.cancel();
       P.speaking = false;
-      document.getElementById("lv-avatar")?.classList.remove("talking");
+      LiveFX.speaking(false);
       return listen();
     }
     if (P.thinking) return;
@@ -399,8 +529,9 @@ function renderLive() {
   };
   const sendTyped = () => {
     const t = document.getElementById("lv-text");
-    if (!t.value.trim()) return;
+    if (!t.value.trim() || P.thinking) return;
     P.listener?.stop();
+    Voice.cancel();
     const text = t.value.trim();
     t.value = "";
     onMyTurn(text, Math.max(3, text.split(/\s+/).length / 2.4));
@@ -411,19 +542,22 @@ function renderLive() {
 
 // Orb states: tap (waiting for you), live (listening), speaking, thinking.
 function setOrb(state) {
+  const changed = P.orb !== state;
   P.orb = state;
   const orb = document.getElementById("lv-you");
   const hint = document.getElementById("lv-hint");
   const pause = document.getElementById("lv-pause");
   if (orb) orb.dataset.state = state;
-  if (pause) pause.textContent = state === "live" ? "Pause" : "Resume";
+  if (pause) pause.textContent = state === "tap" ? "Resume" : "Pause";
   if (hint)
     hint.textContent =
       {
         tap: "Tap to answer",
-        live: IS_IOS ? "Listening — pause to send, or tap to send now" : "Listening — pause to send",
+        live: getSettings().sendAfter === "tap" ? "Listening — tap when you're done" : "Listening — tap to send now",
         speaking: "Tap to interrupt",
+        thinking: "Thinking…",
       }[state] || "";
+  if (changed || state === "live") LiveFX.orb(state);
 }
 // Your turn: PC/Mac start listening right away (hands-free); iPhone waits for one tap (Apple's rule).
 function yourTurn() {
@@ -455,22 +589,25 @@ function drawTranscript() {
 async function say(text) {
   P.listening = false;
   P.listener?.stop();
-  // Release the mic before speaking: an open mic puts Windows/Mac into "call" mode, which can mute or duck the voice.
-  const hadMic = !!Mic.stream;
-  Mic.close();
-  if (hadMic) await wait(250);
   P.thread.push({ from: "them", text });
   drawTranscript();
+  LiveFX.line();
   P.caption = text;
-  const cap = document.getElementById("lv-caption");
-  if (cap) cap.textContent = text;
-  document.getElementById("lv-avatar")?.classList.add("talking");
+  LiveFX.caption(text);
   setStatus("Speaking…");
   P.speaking = true;
+  P.speakSince = Date.now();
   setOrb("speaking");
-  await Voice.speak(text, { gender: P.sc.counterpart.gender, seed: P.seed + P.sc.counterpart.name });
+  LiveFX.speaking(true);
+  plog(`${P.sc.counterpart.name.split(" ")[0]} speaks (${text.split(/\s+/).length} words)`);
+  try {
+    await Voice.speak(text, { gender: P.sc.counterpart.gender, seed: P.seed + P.sc.counterpart.name });
+  } catch (e) {
+    plog("voice error: " + e.message);
+  }
   P.speaking = false;
-  document.getElementById("lv-avatar")?.classList.remove("talking");
+  LiveFX.speaking(false);
+  plog("voice finished" + (Voice.lastError ? " (ElevenLabs: " + Voice.lastError + ")" : ""));
   if (P.listening) return; // you interrupted and are already talking
   if (P.phase !== "live" || !location.hash.startsWith("#practice")) return; // left the page — stay paused
   if (P.ending) return endPractice();
@@ -485,31 +622,36 @@ function listen() {
   P.listener?.stop();
   P.micBlocked = false;
   const youText = document.getElementById("lv-you-text");
-  if (youText) youText.textContent = "";
+  if (youText) youText.textContent = P.pending || "";
   P.listening = true;
+  P.listenSince = Date.now();
   const initial = P.pending || "";
   P.pending = "";
-  P.listener = new Listener({
+  plog("mic on" + (initial ? " (continuing your answer)" : ""));
+  const me = new Listener({
     silenceMs: sendDelayMs(),
     initial,
     onText: (t) => {
+      if (P.listener !== me) return;
       const el = document.getElementById("lv-you-text");
       if (el) el.textContent = t;
+      LiveFX.heard();
     },
-    onTurn: (text, duration) => onMyTurn(text, duration),
+    onTurn: (text, duration) => {
+      if (P.listener !== me) return;
+      plog(`you said ${text.split(/\s+/).length} words`);
+      onMyTurn(text, duration);
+    },
     onState(s, err, kept) {
+      if (P.listener !== me) return; // an old listener — ignore it
       if (s === "listening") {
         const d = getSettings().sendAfter || "3";
         setStatus(d === "tap" ? "Listening… tap the mic (or Send now) when you're done." : `Listening… take your time — it sends after a ${d}-second pause.`, "live");
         setOrb("live");
         P.netRetries = 0;
-        // Tone measurement (PC/Mac only) runs just while you talk, after recognition has the mic.
-        if (!IS_IOS && !Mic.stream)
-          Mic.open(getSettings().micId)
-            .then(() => (P.listening ? Mic.startTurn() : Mic.close()))
-            .catch(() => {});
       }
       if (s === "needs-tap") {
+        plog("mic paused by the browser" + (err ? " (" + err + ")" : "") + (kept ? " — kept your words" : ""));
         P.listening = false;
         P.pending = (kept || "").trim();
         setOrb("tap");
@@ -523,14 +665,10 @@ function listen() {
         );
       }
       if (s === "error") {
-        // Fully stop this listener so nothing keeps running in the background.
-        const l = P.listener;
-        if (l) {
-          l.onState = null;
-          l.stop();
-        }
+        plog("mic error: " + err);
+        me.onState = null;
+        me.stop();
         P.listening = false;
-        Mic.close();
         setOrb("tap");
         if (err === "not-allowed" || err === "service-not-allowed") {
           P.micBlocked = true;
@@ -538,38 +676,47 @@ function listen() {
           setStatus("The browser blocked the mic or speech recognition. Allow the microphone for this site, then tap the mic — or type below.", "warn");
         } else if ((err === "network" || err === "audio-capture") && (P.netRetries = (P.netRetries || 0) + 1) <= 2) {
           setStatus("Reconnecting the mic…", "warn");
-          setTimeout(() => P.phase === "live" && !P.speaking && !P.thinking && listen(), 700);
+          setTimeout(() => P.phase === "live" && !P.speaking && !P.thinking && !P.listening && listen(), 700);
         } else setStatus((err === "network" ? "Speech recognition lost its connection" : "The mic stopped (" + err + ")") + ". Tap the mic to continue.", "warn");
       }
     },
   });
-  P.listener.start();
+  P.listener = me;
+  me.start();
 }
 
 async function onMyTurn(text, duration) {
+  if (P.thinking || P.phase !== "live") return;
   P.listening = false;
   P.pending = "";
-  const audio = Mic.endTurn();
-  Mic.close();
-  P.thread.push({ from: "me", text, duration, audio });
+  P.thread.push({ from: "me", text, duration });
   drawTranscript();
+  LiveFX.line();
+  const yt = document.getElementById("lv-you-text");
+  if (yt) yt.textContent = "";
   setStatus("Thinking…");
   setOrb("thinking");
   P.thinking = true;
-  try {
-    const r = await AI.practiceTurn(P.sc, P.thread, P.kind, P.difficulty);
-    P.thinking = false;
-    if (P.phase !== "live") return;
-    if (r.end) P.ending = true;
-    say(r.reply);
-  } catch (e) {
-    // Keep going: the unanswered turn is removed so you can just say it again.
-    P.thinking = false;
-    P.thread.pop();
-    drawTranscript();
-    setOrb("tap");
-    setStatus(e.message + " Tap the mic to say it again.", "warn");
+  let r = null;
+  if (!P.sc.offline) {
+    const t0 = Date.now();
+    try {
+      // One quick retry for a hiccup, then fall back so the conversation never stops.
+      r = await AI.practiceTurn(P.sc, P.thread, P.kind, P.difficulty).catch((e) => (e.status === 401 || e.status === 403 || /credit/i.test(e.message) ? Promise.reject(e) : AI.practiceTurn(P.sc, P.thread, P.kind, P.difficulty)));
+      plog(`Claude replied in ${((Date.now() - t0) / 1000).toFixed(1)}s`);
+    } catch (e) {
+      plog("Claude failed: " + e.message);
+      goOffline(e.message.replace(/[.—].*$/, "").trim() || "error");
+    }
   }
+  if (P.phase !== "live") return void (P.thinking = false);
+  if (!r) {
+    await wait(500); // a natural beat before the built-in partner answers
+    r = OFFLINE.turn(P.sc, P.thread, P.kind);
+  }
+  P.thinking = false;
+  if (r.end) P.ending = true;
+  say(r.reply);
 }
 
 async function endPractice() {
@@ -579,23 +726,26 @@ async function endPractice() {
   Object.assign(P, { listening: false, speaking: false, thinking: false });
   clearInterval(renderLive._clock);
   if (P.thread.filter((t) => t.from === "me").length < 2) {
-    Mic.close();
     Object.assign(P, { phase: "setup", ending: false });
-    toast("Too short to analyze — say a bit more next time.");
+    toast("Too short to analyze — answer at least two questions next time.");
     return renderPracticeSetup();
   }
   P.phase = "analyzing";
-  Mic.close();
   setStatus("Analyzing your conversation…");
+  setOrb("thinking");
   app.querySelector(".controls")?.remove();
   const metrics = textMetrics(P.thread);
   P.metrics = metrics;
-  try {
-    P.result = await AI.practiceAnalyze(P.sc, P.thread, metrics, P.kind);
-  } catch (e) {
-    P.phase = "live";
-    return setStatus(e.message, "warn");
+  P.result = null;
+  if (!P.sc.offline && AI.enabled()) {
+    try {
+      P.result = await AI.practiceAnalyze(P.sc, P.thread, metrics, P.kind);
+    } catch (e) {
+      plog("Claude analysis failed: " + e.message);
+      toast(e.message + " Showing the built-in analysis instead.");
+    }
   }
+  P.result ||= OFFLINE.analyze(P.sc, P.thread, metrics, P.kind);
   const s = study();
   s.sessions = [{ id: uid(), mode: P.kind, label: practiceLabel(), score: P.result.overall, difficulty: P.difficulty, at: Date.now(), metrics, result: P.result, title: P.sc.title, counterpart: P.sc.counterpart, thread: P.thread.map(({ from, text }) => ({ from, text })), secs: Math.round((Date.now() - P.started) / 1000) }, ...(s.sessions || [])].slice(0, 40);
   saveStudy(s);
@@ -603,6 +753,7 @@ async function endPractice() {
   route.quiet = true;
   renderPracticeResult();
   Motion.page();
+  LiveFX.results();
 }
 
 function metricCard(label, value, note, tone) {

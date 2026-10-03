@@ -1308,8 +1308,8 @@ function renderSettings() {
         <p class="small muted">Unlocks live role research, keyword rewording, the adaptive coach, "Find roles" and answer feedback. Get a key at console.anthropic.com — each use costs a little on your Anthropic account.</p>
         <label class="field"><span>Claude API key</span><input type="password" id="apikey" value="${esc(s.apiKey)}" placeholder="sk-ant-…" autocomplete="off"></label>
         <label class="field"><span>Model</span><select id="model">
-          <option value="claude-opus-5" ${s.model === "claude-opus-5" ? "selected" : ""}>Claude Opus 5 (best quality)</option>
-          <option value="claude-sonnet-5" ${s.model === "claude-sonnet-5" ? "selected" : ""}>Claude Sonnet 5 (cheaper)</option></select></label>
+          <option value="claude-opus-5-5" ${AI.model() === "claude-opus-5-5" ? "selected" : ""}>Claude Opus 5.5 (best quality)</option>
+          <option value="claude-sonnet-5-5" ${AI.model() === "claude-sonnet-5-5" ? "selected" : ""}>Claude Sonnet 5.5 (faster, cheaper)</option></select></label>
         <div class="row"><button class="btn primary" id="save-ai">Save</button><button class="btn" id="test-ai">Test key</button></div>
         <p class="small muted">Only use this on your own device.</p></div>
       <div class="card"><h3>Human voice (ElevenLabs)</h3>

@@ -746,3 +746,12 @@ label.check input { margin-top: 3px; }
 .sc-step.ok .i { color: var(--good); }
 .sc-step.bad { background: var(--bad-soft); }
 .sc-step.bad .i { color: var(--bad); }
+/* live session motion bits */
+.status-row { display: flex; align-items: center; justify-content: center; gap: 8px; min-height: 22px; }
+.lv-dots { display: inline-flex; gap: 4px; }
+.lv-dots i { width: 6px; height: 6px; border-radius: 50%; background: var(--muted); display: block; }
+.lv-wave { display: flex; align-items: center; gap: 4px; height: 26px; }
+.lv-wave i { display: block; width: 4px; height: 26px; border-radius: 3px; background: var(--good); transform-origin: center; transform: scaleY(.3); }
+.caption .w { display: inline; }
+.lv-logbox pre { max-height: 180px; overflow: auto; font: 11.5px/1.5 var(--mono); background: var(--surface-2); padding: 8px 10px; border-radius: var(--r-sm); white-space: pre-wrap; }
+.lv-wave[hidden], .lv-dots[hidden] { display: none; }

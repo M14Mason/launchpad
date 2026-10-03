@@ -24,7 +24,7 @@ function saveBank(bank) {
   Store.set("bank", bank);
 }
 function getSettings() {
-  return Object.assign({ phone: "", apiKey: "", model: "claude-opus-5" }, Store.get("settings", {}));
+  return Object.assign({ phone: "", apiKey: "", model: "claude-opus-5-5" }, Store.get("settings", {}));
 }
 
 const esc = (s) =>
