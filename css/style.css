@@ -948,3 +948,31 @@ label.check input { margin-top: 3px; }
 .ag-row.done .ag-check { background: var(--good); border-color: var(--good); color: var(--bg); }
 .ag-check .i { width: 12px; height: 12px; }
 @media (max-width: 1000px) { .desk { max-height: none; } }
+/* client file navigation */
+.cl-topbar { display: flex; justify-content: space-between; align-items: center; gap: 10px; margin-bottom: 6px; }
+.cl-topbar select { max-width: 220px; }
+.journey { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 8px; margin-bottom: 12px; }
+.jstep { display: flex; gap: 10px; align-items: center; padding: 10px 12px; border: 1px solid var(--border); border-radius: var(--r); background: var(--surface); color: var(--text); text-decoration: none; font: inherit; text-align: left; cursor: pointer; transition: border-color .15s, transform .15s; }
+.jstep:hover { border-color: var(--border-strong); transform: translateY(-1px); }
+.jstep strong { display: block; font-size: 13.5px; }
+.jstep .small { display: block; }
+.jnum { width: 26px; height: 26px; flex: none; border-radius: 50%; display: grid; place-items: center; font: 600 12px var(--font); background: var(--surface-2); color: var(--muted); }
+.jnum .i { width: 13px; height: 13px; }
+.jstep.done .jnum { background: var(--good); color: var(--bg); }
+.jstep.cur { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent); }
+.jstep.cur .jnum { background: var(--accent); color: #fff; }
+.client-tabs-wrap { position: sticky; top: 0; z-index: 15; background: var(--bg); padding: 6px 0; margin-bottom: 8px; }
+.client-tabs a { display: inline-flex; align-items: center; gap: 6px; }
+.client-tabs a .i { width: 14px; height: 14px; }
+.evidence { font-size: 12.5px; padding: 6px 10px; border-radius: var(--r-sm); background: var(--good-soft); color: var(--text-2); }
+.evidence.none { background: var(--warn-soft); }
+.evidence .i { width: 13px; height: 13px; vertical-align: -2px; }
+.doc.brought { color: var(--accent); border-color: color-mix(in srgb, var(--accent) 40%, transparent); }
+@media (max-width: 860px) {
+  .journey { display: flex; overflow-x: auto; scrollbar-width: none; margin: 0 -16px 12px; padding: 0 16px; }
+  .journey::-webkit-scrollbar { display: none; }
+  .jstep { flex: none; min-width: 150px; }
+  .client-tabs-wrap { top: 0; margin: 0 -16px 8px; padding: 6px 16px; }
+  .client-tabs a span { display: none; }
+  .client-tabs a.on span { display: inline; }
+}

@@ -134,10 +134,24 @@ const OFFLINE = (() => {
       if (sc.clientFacts) {
         // Small talk and process talk get a natural reply, not a data dump.
         if (/\b(nice to meet|how are you|thanks for (coming|meeting)|how (I|this) work|the process|today we|agenda)\b/i.test(last) && !/\?.*\b(rent|debt|sav|income|pay|401|goal|risk)/i.test(last))
-          return { reply: pick(["Nice to meet you too. That sounds good — where do you want to start?", "Thanks. Honestly I'm a little nervous, I've never done this before. Go ahead.", "Okay, that makes sense. I'm ready when you are."]), end: false };
-        const hits = FACTS.map((f, i) => [f, i]).filter(([[re], i]) => re.test(last) && !sc.revealed.includes(i)).slice(0, 3);
+          return { reply: pick(sc.smallTalk || ["Nice to meet you too. That sounds good — where do you want to start?", "Okay, that makes sense. I'm ready when you are."]), end: false };
+        const hits = FACTS.map((f, i) => [f, i]).filter(([[re], i]) => re.test(last) && !sc.revealed.includes(i)).slice(0, sc.style === "brief" ? 1 : 3);
         hits.forEach(([, i]) => sc.revealed.push(i));
-        if (hits.length) return { reply: hits.map(([f]) => f[1]).join(" ") + ((c.worry || 3) >= 4 && Math.random() < 0.3 ? " Sorry — this stuff stresses me out." : ""), end: false };
+        // Personality shapes how they talk.
+        const flavor = () => {
+          const r = Math.random();
+          if (sc.style === "chatty" && r < 0.45) return " " + pick(["Sorry, I'm rambling — my sister says I always do this.", "Anyway, that's a long story.", "Oh, and the dog just knocked over a lamp at home, so that's my day."]);
+          if (sc.style === "skeptical" && r < 0.35) return " " + pick(["But how do I know this will actually work for me?", "No offense, but the last guy just wanted to sell me something.", "What's in it for you, exactly?"]);
+          if ((sc.style === "anxious" || (c.worry || 3) >= 4) && r < 0.35) return " " + pick(["Sorry — this stuff stresses me out.", "Is that bad? It feels bad.", "I lie awake thinking about this sometimes."]);
+          if (sc.style === "detailed" && r < 0.3) return " " + pick(["Can you show me the math on that later?", "I have a spreadsheet for this, actually."]);
+          if (sc.style === "upbeat" && r < 0.3) return " " + pick(["I'm honestly excited to get this figured out!", "This is already helping."]);
+          return "";
+        };
+        // Surprise goal: volunteered on their own partway through — you have to catch it.
+        const surprise = mine.length >= 3 && sc.surprise?.length && Math.random() < 0.45 ? " " + sc.surprise.shift() : "";
+        if (hits.length) return { reply: hits.map(([f]) => f[1]).join(" ") + surprise + flavor(), end: false };
+        if (surprise) return { reply: surprise.trim(), end: false };
+        if (sc.style === "guarded" && /\b(how much|what('s| is) your|income|balance)\b/i.test(last) && Math.random() < 0.5) return { reply: pick(["I'd rather not get into exact numbers yet.", "Why do you need to know that?"]), end: false };
       }
       const hit = FACTS.find(([re], i) => re.test(last) && !sc.revealed.includes(i));
       if (hit) sc.revealed.push(FACTS.indexOf(hit));

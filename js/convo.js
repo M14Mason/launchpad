@@ -832,11 +832,11 @@ function listen() {
       if (el) el.textContent = t;
       LiveFX.heard();
     },
-    onTurn: (text, duration) => {
+    onTurn: (text, duration, audio) => {
       if (P.listener !== me) return;
       P.transcribing = false;
-      plog(`you said ${text.split(/\s+/).length} words`);
-      onMyTurn(text, duration);
+      plog(`you said ${text.split(/\s+/).length} words in ${duration}s`);
+      onMyTurn(text, duration, audio);
     },
     onState(s, err, kept) {
       if (P.listener !== me) return; // an old listener — ignore it
@@ -899,11 +899,11 @@ function listen() {
   me.start();
 }
 
-async function onMyTurn(text, duration) {
+async function onMyTurn(text, duration, audio = null) {
   if (P.thinking || P.phase !== "live") return;
   P.listening = false;
   P.pending = "";
-  P.thread.push({ from: "me", text, duration });
+  P.thread.push({ from: "me", text, duration, audio });
   drawTranscript();
   LiveFX.line();
   const yt = document.getElementById("lv-you-text");
@@ -1004,14 +1004,14 @@ function renderPracticeResult(saved) {
     </div>
     <section class="card"><h2>Delivery</h2>
       <div class="metrics">
-        ${metricCard("Pace", m.wpm ? m.wpm + " wpm" : "—", "Conversational: 130–160", toneOf(m.wpm >= 125 && m.wpm <= 170, m.wpm))}
+        ${metricCard("Pace", m.wpm ? m.wpm + " wpm" : "—", m.wpm ? "Conversational: 130–160" : "Not enough timing data this session", toneOf(m.wpm >= 125 && m.wpm <= 170, !m.wpm || m.wpm))}
         ${metricCard("Filler words", m.fillersPer100 + " / 100 words", m.topFillers.length ? m.topFillers.map(([f, n]) => `“${f}” ×${n}`).join(", ") : "None detected", toneOf(m.fillersPer100 < 2, m.fillersPer100 < 4))}
-        ${metricCard("Pitch variation", m.pitchVarSemis != null ? m.pitchVarSemis + " semitones" : "—", m.pitchVarSemis != null ? (m.pitchVarSemis < 1.5 ? "Leaning monotone" : m.pitchVarSemis > 6 ? "Very animated" : "Expressive") : IS_IOS ? "Measured on PC/Mac" : "Not measured", toneOf(m.pitchVarSemis >= 1.5 && m.pitchVarSemis <= 6, m.pitchVarSemis == null))}
-        ${metricCard("Volume steadiness", m.volumeCv != null ? (m.volumeCv < 0.6 ? "Steady" : m.volumeCv < 0.9 ? "Some swings" : "Uneven") : "—", m.volumeCv != null ? `variation ${m.volumeCv}` : IS_IOS ? "Measured on PC/Mac" : "Not measured", toneOf(m.volumeCv != null && m.volumeCv < 0.6, m.volumeCv == null || m.volumeCv < 0.9))}
+        ${m.pitchVarSemis == null ? "" : metricCard("Pitch variation", m.pitchVarSemis != null ? m.pitchVarSemis + " semitones" : "—", m.pitchVarSemis != null ? (m.pitchVarSemis < 1.5 ? "Leaning monotone" : m.pitchVarSemis > 6 ? "Very animated" : "Expressive") : IS_IOS ? "Measured on PC/Mac" : "Not measured", toneOf(m.pitchVarSemis >= 1.5 && m.pitchVarSemis <= 6, m.pitchVarSemis == null))}
+        ${m.volumeCv == null ? "" : metricCard("Volume steadiness", m.volumeCv != null ? (m.volumeCv < 0.6 ? "Steady" : m.volumeCv < 0.9 ? "Some swings" : "Uneven") : "—", m.volumeCv != null ? `variation ${m.volumeCv}` : IS_IOS ? "Measured on PC/Mac" : "Not measured", toneOf(m.volumeCv != null && m.volumeCv < 0.6, m.volumeCv == null || m.volumeCv < 0.9))}
         ${metricCard("Questions you asked", m.questionsAsked, X.kind === "interview" ? "Ask the interviewer at the end" : "Discovery questions build trust", toneOf(m.questionsAsked >= 3, m.questionsAsked >= 1))}
-        ${metricCard("Hedging", m.hedges, "“I guess”, “maybe”, “kind of”", toneOf(m.hedges <= 1, m.hedges <= 3))}
+        ${metricCard("Hedging words", m.hedges, m.hedges ? "Lower is better — words like “I guess”, “maybe”, “kind of” weaken your point" : "None — you spoke with confidence. (Hedges are “I guess”, “maybe”, “kind of”.)", toneOf(m.hedges <= 1, m.hedges <= 3))}
         ${metricCard("Talk share", m.talkShare + "%", X.kind === "fpclient" || X.kind === "sales" ? "Listen more than you talk (≈40–55%)" : "Answers should carry the conversation", "")}
-        ${metricCard("Longest pause", m.longestPause != null ? m.longestPause + "s" : "—", "Brief pauses read as confident", "")}
+        ${m.longestPause == null ? "" : metricCard("Longest pause", m.longestPause + "s", "Brief pauses read as confident", "")}
       </div>
       <p>${esc(r.tone)}</p>
     </section>

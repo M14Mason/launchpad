@@ -91,57 +91,89 @@ function relBar(c) {
 
 // ---------- client file ----------
 const CL_TABS = [
-  ["overview", "Overview"],
-  ["data", "What you know"],
-  ["plan", "Plan builder"],
-  ["sims", "Simulations"],
-  ["stress", "Stress tests"],
-  ["meetings", "Meetings"],
-  ["doc", "Plan document"],
+  ["overview", "Overview", "home"],
+  ["data", "What you know", "clipboard"],
+  ["plan", "Plan builder", "pen"],
+  ["sims", "Simulations", "trend"],
+  ["stress", "Stress tests", "alert"],
+  ["meetings", "Meetings", "message"],
+  ["doc", "Plan document", "file"],
 ];
+// The client journey: each step links to where you do it.
+function journey(c) {
+  const F = Clients.fields(c);
+  const known = F.filter((f) => c.collected[f.key]).length;
+  const docs = Clients.docsOf(c);
+  const docsIn = docs.filter((d) => d.status === "received").length;
+  const has = (t) => c.meetings.some((m) => m.type === t);
+  return [
+    { id: "meet", label: "Discovery", sub: has("discovery") ? `${known}/${F.length} facts` : "First meeting", done: has("discovery"), href: null, action: "meet" },
+    { id: "docs", label: "Documents", sub: `${docsIn}/${docs.length} received`, done: docsIn === docs.length, href: `#client/${c.id}/data` },
+    { id: "plan", label: "Build plan", sub: c.plan?.grade ? `Grade ${c.plan.grade.total}` : "Your turn", done: !!c.plan?.submittedAt, href: `#client/${c.id}/plan` },
+    { id: "present", label: "Present", sub: has("presentation") ? "Done" : "Meeting", done: has("presentation"), href: null, action: "meet" },
+    { id: "review", label: "Reviews", sub: `${c.meetings.filter((m) => m.type === "review").length} so far`, done: false, href: null, action: "meet" },
+  ];
+}
 function renderClient(arg) {
   const [id, tab = "overview"] = arg.split("/");
   const c = Clients.find(id);
   if (!c) return (app.innerHTML = empty(`Client not found. <a href="#clients">Client book</a>`));
+  c.docs = Clients.docsOf(c);
   const type = Clients.meetingType(c);
+  const steps = journey(c);
+  const cur = steps.findIndex((s) => !s.done);
+  const others = Clients.all().filter((x) => x.id !== c.id);
   app.innerHTML = `
-    <a class="back" href="#clients">‹ Client book</a>
+    <div class="cl-topbar"><a class="back" href="#clients">‹ Client book</a>${others.length ? `<select id="cl-switch" aria-label="Switch client"><option value="">Switch client…</option>${others.map((x) => `<option value="${x.id}">${esc(x.first + " " + x.last)} · ${STAGES.find(([k]) => k === x.stage)[1]}</option>`).join("")}</select>` : ""}</div>
     <div class="client-head card">
       <div class="orb-host client-orb" id="cl-orb"></div>
-      <div class="grow"><div class="eyebrow">${esc(c.job)} · ${esc(c.city)} · ${DIFF_LABEL[c.difficulty]}</div><h1>${esc(c.first)} ${esc(c.last)}</h1>
-        <div class="stepper">${STAGES.map(([k, l], i) => `<span class="${STAGES.findIndex(([x]) => x === c.stage) >= i ? "done" : ""}">${l}</span>`).join("")}</div>
+      <div class="grow"><div class="eyebrow">${esc(c.job)} · ${esc(c.city)} · ${DIFF_LABEL[c.difficulty]}${c.style ? " · " + esc(c.style) + " personality" : ""}</div><h1>${esc(c.first)} ${esc(c.last)}</h1>
         ${relBar(c)}</div>
       <div class="client-next"><div class="k">${Clients.dateOf(c)}</div>${nextStepHTML(c, type)}</div>
     </div>
-    <div class="tabs-inline client-tabs">${CL_TABS.map(([k, l]) => `<a href="#client/${c.id}/${k}" class="${tab === k ? "on" : ""}">${l}</a>`).join("")}</div>
+    <div class="journey">${steps
+      .map((s, i) => `<${s.href ? `a href="${s.href}"` : `button type="button" data-step="${s.action}"`} class="jstep ${s.done ? "done" : i === cur ? "cur" : ""}"><span class="jnum">${s.done ? icon("check") : i + 1}</span><span><strong>${s.label}</strong><span class="small muted">${s.sub}</span></span></${s.href ? "a" : "button"}>`)
+      .join("")}</div>
+    <nav class="client-tabs-wrap"><div class="tabs-inline client-tabs">${CL_TABS.map(([k, l, ic]) => `<a href="#client/${c.id}/${k}" class="${tab === k ? "on" : ""}">${icon(ic)}<span>${l}</span></a>`).join("")}</div></nav>
     <div id="cl-body"></div>`;
   Orb3D.mount(document.getElementById("cl-orb"), { colors: Clients.persona(c).colors });
   wireNextStep(c, type);
+  document.getElementById("cl-switch")?.addEventListener("change", (e) => e.target.value && go("client/" + e.target.value + "/" + tab));
+  app.querySelectorAll("[data-step]").forEach((b) => b.addEventListener("click", () => document.getElementById("cl-meet")?.click()));
+  if (window.gsap && !Motion.reduced) {
+    gsap.from(app.querySelectorAll(".jstep"), { y: 10, autoAlpha: 0, duration: 0.4, stagger: 0.05, ease: "power2.out" });
+    Motion.ensureVisible([...app.querySelectorAll(".jstep")], 1500);
+  }
   const body = document.getElementById("cl-body");
   ({ overview: clOverview, data: clData, plan: clPlan, sims: clSims, stress: clStress, meetings: clMeetings, doc: clDoc }[tab] || clOverview)(c, body);
 }
 
 function nextStepHTML(c, type) {
-  const label = { discovery: c.meetings.length ? "Continue discovery" : "Start discovery meeting", presentation: "Present your plan", review: "Review meeting" }[type];
-  const needsTime = c.meetings.length > 0;
-  return `${
-    needsTime
-      ? `<label class="field"><span>Next meeting</span><select id="cl-gap">${[
-          [0, "Later this month"],
-          [1, "In 1 month"],
-          [3, "In 3 months"],
-          [6, "In 6 months"],
-          [12, "In 1 year"],
-        ]
-          .filter(([m]) => !(type === "review" && m === 0))
-          .map(([m, l]) => `<option value="${m}" ${m === (type === "review" ? 3 : 0) ? "selected" : ""}>${l}</option>`)
-          .join("")}</select></label>`
-      : ""
-  }<button class="btn primary block" id="cl-meet">${icon("mic")} ${label}</button>${type === "presentation" && !c.plan?.submittedAt ? `<p class="small muted">Build and submit your plan first.</p>` : ""}`;
+  const docsLeft = Clients.docsOf(c).filter((d) => d.status !== "received").length;
+  const gaps = [
+    [0, "Later this month"],
+    [1, "In 1 month"],
+    [3, "In 3 months"],
+    [6, "In 6 months"],
+    [12, "In 1 year"],
+  ].filter(([m]) => !(type === "review" && m === 0));
+  const gapSel = c.meetings.length ? `<label class="field"><span>When</span><select id="cl-gap">${gaps.map(([m, l]) => `<option value="${m}" ${m === (type === "review" ? 3 : 0) ? "selected" : ""}>${l}</option>`).join("")}</select></label>` : "";
+  if (type === "followup")
+    return `<a class="btn primary block" href="#client/${c.id}/plan">${icon("pen")} Build the plan</a>
+      ${docsLeft ? `<button class="btn block" id="cl-docs">${icon("mail")} Email document request (${docsLeft})</button>` : ""}
+      ${gapSel}<button class="btn block" id="cl-meet">${icon("mic")} Follow-up call to fill gaps</button>`;
+  const label = { discovery: "Start discovery meeting", presentation: "Present your plan", review: "Review meeting" }[type];
+  return `${gapSel}<button class="btn primary block" id="cl-meet">${icon("mic")} ${label}</button>${docsLeft && c.meetings.length ? `<button class="btn block" id="cl-docs">${icon("mail")} Email document request (${docsLeft})</button>` : ""}`;
 }
 function wireNextStep(c, type) {
+  document.getElementById("cl-docs")?.addEventListener("click", () => {
+    const got = Clients.requestDocs(c.id);
+    const left = Clients.docsOf(Clients.find(c.id)).filter((d) => d.status !== "received").length;
+    toast(got.length ? `Documents arrived — ${got.length} new fact${got.length === 1 ? "" : "s"} added.${left ? ` ${left} still missing; follow up.` : ""}` : left ? "They haven't sent them yet — follow up in your next meeting." : "Everything's already in.");
+    route.keepScroll = true;
+    route();
+  });
   document.getElementById("cl-meet").onclick = () => {
-    if (type === "presentation" && !c.plan?.submittedAt) return go(`client/${c.id}/plan`);
     const gap = +(document.getElementById("cl-gap")?.value || 0);
     let events = [];
     if (gap > 0)
@@ -183,10 +215,11 @@ function intakeHTML(c, { compact = false } = {}) {
     ["Referred by", c.referral],
     ["Why they called", c.reason],
   ];
-  const docs = c.docs || [];
+  const docs = Clients.docsOf(c);
+  const DOC_LBL = { brought: "bringing to the meeting", requested: "requested", received: "received" };
   return `<div class="intake ${compact ? "compact" : ""}">${rows.map(([a, b]) => `<div class="kv"><span>${a}</span><strong>${esc(String(b))}</strong></div>`).join("")}
     ${c.intakeGoals?.length ? `<div class="iq"><div class="k">Pre-meeting questionnaire — goals (their words)</div><ul class="small">${c.intakeGoals.map((g) => `<li>${esc(g)}</li>`).join("")}</ul>${c.concern ? `<div class="small">Biggest worry: <strong>${esc(c.concern)}</strong></div>` : ""}</div>` : ""}
-    ${docs.length ? `<div class="iq"><div class="k">Documents requested</div><div class="docs">${docs.map((d) => `<span class="doc ${d.brought ? "in" : ""}">${icon(d.brought ? "check" : "x")} ${esc(d.name)}</span>`).join("")}</div><div class="small muted">Amounts still need to be confirmed in conversation.</div></div>` : ""}</div>`;
+    ${docs.length ? `<div class="iq"><div class="k">Documents</div><div class="docs">${docs.map((d) => `<span class="doc ${d.status === "received" ? "in" : d.status === "brought" ? "brought" : ""}" title="${DOC_LBL[d.status]}">${icon(d.status === "received" ? "check" : d.status === "brought" ? "clipboard" : "mail")} ${esc(d.name)}</span>`).join("")}</div><div class="small muted">Ask for documents in a meeting: what they brought gets reviewed, the rest arrives after. Received documents fill in your data automatically.</div></div>` : ""}</div>`;
 }
 
 function clOverview(c, el) {
@@ -226,7 +259,7 @@ function clData(c, el) {
   const show = tough ? !!clData.show : true;
   const secs = [...new Set(F.map((f) => f.sec))];
   const missing = F.filter((f) => !c.collected[f.key]);
-  const fmt = (f, v) => (v == null ? "—" : f.pct ? v + "%" : f.years ? v + " yrs" : typeof v === "number" ? (f.key === "risk" ? Clients.MODELS[v - 1].name + ` (${v}/5)` : Clients.usd(v)) : v);
+  const fmt = (f, v) => (v == null ? "—" : Array.isArray(v) ? "5 answers on file" : f.pct ? v + "%" : f.years ? v + " yrs" : typeof v === "number" ? (f.key === "risk" ? "noted" : Clients.usd(v)) : v);
   el.innerHTML = `
     <div class="stats"><div class="card stat"><div class="k">Facts collected</div><div class="stat-v">${F.length - missing.length}<span class="muted">/${F.length}</span></div></div>
       <div class="card stat"><div class="k">Meetings</div><div class="stat-v">${c.meetings.length}</div></div>
@@ -240,7 +273,7 @@ function clData(c, el) {
           .map((f) => {
             const got = c.collected[f.key];
             const man = c.manual?.[f.key];
-            return `<div class="data-row ${got ? "got" : "miss"}"><div class="grow"><strong>${esc(f.label)}</strong>${got ? `<div class="small muted">“${esc(got.quote)}” — meeting ${got.meeting}${got.approx ? " · approximate" : ""}</div>` : tough ? `<div class="small muted">Not collected — fill it in if you can justify it.</div>` : `<div class="small warn-text">Ask next meeting</div>`}</div>
+            return `<div class="data-row ${got ? "got" : "miss"}"><div class="grow"><strong>${esc(f.label)}</strong>${got ? `<div class="small muted">${got.doc ? `${icon("file")} ${esc(got.doc)}` : `“${esc(got.quote)}” — meeting ${got.meeting}`}${got.approx ? " · approximate" : ""}</div>` : tough ? `<div class="small muted">Not collected — fill it in if you can justify it.</div>` : `<div class="small warn-text">Ask next meeting</div>`}</div>
               <div class="data-val">${got ? fmt(f, got.value) : tough && f.num != null ? `<input class="mini-field" type="number" step="any" data-man="${f.key}" value="${man ?? ""}" placeholder="?">` : "—"}</div></div>`;
           })
           .join("")}</section>`;
@@ -260,6 +293,21 @@ function clData(c, el) {
 }
 
 // ---------- plan builder ----------
+// What the client has actually told you (or put in writing) for each risk question.
+function riskEvidence(c, qi) {
+  const q = Clients.val(c, "riskq");
+  if (Array.isArray(q)) return { has: true, text: `Their questionnaire: “${Clients.RISK_QS[qi][1][q[qi]]}”` };
+  const said = c.collected.risk;
+  const k = Clients.known(c);
+  if (qi <= 1) return said ? { has: true, text: `They said: “${said.quote}”` } : { has: false, text: "No data yet — ask how they'd feel if their investments dropped, or get their risk questionnaire." };
+  if (qi === 2) {
+    const g = k.goals.filter((x) => x.years != null);
+    return g.length ? { has: true, text: "Goal timelines: " + g.map((x) => `${x.name.toLowerCase()} in ${x.years} yrs`).join(", ") } : { has: false, text: "No timelines yet — ask when they need the money." };
+  }
+  if (qi === 3) return { has: true, text: `Intake: ${c.job}${c.payType ? ` (${c.payType} pay)` : ""}${c.events.some((e) => e.id === "jobloss") ? " · was laid off recently" : ""}` };
+  const acct = [k.k401 != null && `401(k) ${Clients.usd(k.k401)}`, k.roth != null && (k.roth ? `Roth IRA ${Clients.usd(k.roth)}` : "no Roth IRA")].filter(Boolean);
+  return acct.length ? { has: true, text: "Accounts: " + acct.join(", ") } : { has: false, text: "No data yet — ask about their retirement and investment accounts." };
+}
 function defaultPlan(c) {
   const k = Clients.known(c);
   return { riskAnswers: [null, null, null, null, null], efMonths: 4, efMonthly: 0, debtStrategy: "avalanche", extraDebt: 0, k401Pct: k.contrib ?? 0, alloc: { stocks: 60, bonds: 35, cash: 5 }, goalSavings: {}, notes: "" };
@@ -274,9 +322,12 @@ function clPlan(c, el) {
   el.innerHTML = `
     <div class="plan-grid">
       <div class="plan-main">
-        <section class="card"><h2>1 · Risk profile</h2><p class="small muted">Answer for the client, based on what they told you.${k.risk ? ` They said: “${esc(c.collected.risk?.quote || "")}”` : " You haven't asked about risk yet."}</p>
-          ${Clients.RISK_QS.map(([q, opts], qi) => `<div class="rq"><div class="small"><strong>${q}</strong></div><div class="segmented wrap">${opts.map((o, oi) => `<button data-rq="${qi}" data-ro="${oi}" class="${plan.riskAnswers[qi] === oi ? "on" : ""}">${o}</button>`).join("")}</div></div>`).join("")}
-          <div id="pl-risk" class="callout"></div>${hint("Match the questions to what the client actually said about losses and their timeline. A client who says they'd sell after a drop is conservative even if they want growth.")}</section>
+        <section class="card"><h2>1 · Risk profile</h2><p class="small muted">Fill in each answer from the client's own data — the evidence you've collected is shown under each question. Answers with no evidence get flagged.</p>
+          ${Clients.RISK_QS.map(([q, opts], qi) => {
+            const ev = riskEvidence(c, qi);
+            return `<div class="rq"><div class="small"><strong>${q}</strong></div><div class="evidence ${ev.has ? "" : "none"}">${icon(ev.has ? "file" : "alert")} ${esc(ev.text)}</div><div class="segmented wrap">${opts.map((o, oi) => `<button data-rq="${qi}" data-ro="${oi}" class="${plan.riskAnswers[qi] === oi ? "on" : ""}">${o}</button>`).join("")}</div></div>`;
+          }).join("")}
+          <div id="pl-risk" class="callout"></div>${hint("Real planners never guess risk tolerance — it comes from the client's questionnaire and what they said. If evidence is missing, ask for the risk questionnaire (it's one of their documents) or ask how they'd feel if their investments fell 25%.")}</section>
         <section class="card"><h2>2 · Cash flow</h2><div id="pl-cash"></div>${hint("Surplus = take-home pay − housing − other spending − minimum debt payments. Your plan can't spend more than this each month.")}</section>
         <section class="card"><h2>3 · Emergency fund</h2>
           <label class="field"><span>Target</span><div class="segmented">${[3, 4, 6, 9, 12].map((m) => `<button data-ef="${m}" class="${plan.efMonths === m ? "on" : ""}">${m} mo</button>`).join("")}</div></label>
@@ -519,7 +570,7 @@ function renderClientBrief() {
   const missing = F.filter((f) => !c.collected[f.key] && !/^when-|^min-/.test(f.key));
   app.innerHTML = `
     <a class="back" href="#client/${c.id}" id="cb-back">‹ ${esc(c.first)}'s file</a>
-    <section class="ps-hero"><div class="ps-copy"><div class="eyebrow">${m.type === "discovery" ? "Discovery meeting" : m.type === "presentation" ? "Plan presentation" : "Review meeting"} · ${Clients.dateOf(c)}</div><h1>Meeting with<br><span class="accent-text">${esc(c.first)} ${esc(c.last)}</span></h1>
+    <section class="ps-hero"><div class="ps-copy"><div class="eyebrow">${Clients.MEETING_NAME[m.type] || "Meeting"} · ${Clients.dateOf(c)}</div><h1>Meeting with<br><span class="accent-text">${esc(c.first)} ${esc(c.last)}</span></h1>
       <p class="muted">${esc(c.age + " · " + c.job + " · " + (c.married ? "married" : "single") + (c.kids.length ? " · " + c.kids.length + " kid(s)" : ""))}</p>${relBar(c)}</div>
       <div class="ps-stage"><div class="orb-host" id="ps-orb"></div></div></section>
     <div class="practice-setup"><section class="card"><h2>Your agenda</h2>

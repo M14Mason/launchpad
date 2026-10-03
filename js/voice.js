@@ -103,41 +103,56 @@ const Eleven = {
     } catch {}
     return ELEVEN_DEFAULTS[g][Math.abs(hash(seed)) % ELEVEN_DEFAULTS[g].length];
   },
+  // Returns { url, end }: `end` is when the last real word finishes (from ElevenLabs' timing data),
+  // so playback can stop there — voice models occasionally add a few seconds of garbled audio after the text.
   async audioFor(text, voiceId) {
+    // A clean ending (final punctuation) also makes trailing artifacts much less likely.
+    text = String(text).trim();
+    if (!/[.!?]["')\]]?$/.test(text)) text += ".";
     const k = voiceId + "|" + text;
     if (this.cache.has(k)) return this.cache.get(k);
     const s = getSettings();
-    const res = await this.request(`/v1/text-to-speech/${voiceId}?output_format=mp3_44100_128`, {
-      method: "POST",
-      body: JSON.stringify({
-        text,
-        model_id: s.elevenModel || "eleven_flash_v2_5",
-        voice_settings: { stability: 0.4, similarity_boost: 0.8, style: 0.2, use_speaker_boost: true, speed: Math.min(1.2, Math.max(0.7, s.voiceRate || 1)) },
-      }),
+    const body = JSON.stringify({
+      text,
+      model_id: s.elevenModel || "eleven_flash_v2_5",
+      voice_settings: { stability: 0.5, similarity_boost: 0.8, style: 0.15, use_speaker_boost: true, speed: Math.min(1.2, Math.max(0.7, s.voiceRate || 1)) },
     });
-    const url = URL.createObjectURL(await res.blob());
-    this.cache.set(k, url);
+    let out;
+    try {
+      const j = await (await this.request(`/v1/text-to-speech/${voiceId}/with-timestamps?output_format=mp3_44100_128`, { method: "POST", body })).json();
+      const bytes = Uint8Array.from(atob(j.audio_base64), (c) => c.charCodeAt(0));
+      const ends = j.alignment?.character_end_times_seconds || j.normalized_alignment?.character_end_times_seconds || [];
+      out = { url: URL.createObjectURL(new Blob([bytes], { type: "audio/mpeg" })), end: ends.length ? ends[ends.length - 1] : null };
+    } catch (e) {
+      if (e.kind === "key" || e.kind === "voice") throw e;
+      // Timing endpoint unavailable: plain audio, cut at a generous estimate of the real length.
+      const res = await this.request(`/v1/text-to-speech/${voiceId}?output_format=mp3_44100_128`, { method: "POST", body });
+      out = { url: URL.createObjectURL(await res.blob()), end: null, estimate: text.length / 13 + 1.2 };
+    }
+    this.cache.set(k, out);
     if (this.cache.size > 40) {
       const [old] = this.cache.keys();
-      URL.revokeObjectURL(this.cache.get(old));
+      URL.revokeObjectURL(this.cache.get(old).url);
       this.cache.delete(old);
     }
-    return url;
+    return out;
   },
   async play(text, { gender, seed, onStart, isCurrent, voiceId, onWord }) {
     if (this.broken) throw Object.assign(new Error(this.broken), { kind: "key" });
-    let url;
+    let clip;
     try {
       const chosen = getSettings().elevenVoice;
       // A character always uses its own voice (so Nora always sounds like Nora); the Settings voice is for everything else.
-      url = await this.audioFor(text, voiceId || (chosen && chosen !== "auto" ? chosen : await this.voiceFor(gender, seed)));
+      clip = await this.audioFor(text, voiceId || (chosen && chosen !== "auto" ? chosen : await this.voiceFor(gender, seed)));
     } catch (e) {
       if (e.kind === "key") this.broken = e.message; // don't keep failing (and waiting) on every line
       if (e.kind !== "voice") throw e;
       // The chosen voice isn't available on this plan: fall back to a built-in voice.
       const g = /^m/i.test(gender || "") ? "male" : "female";
-      url = await this.audioFor(text, ELEVEN_DEFAULTS[g][0]);
+      clip = await this.audioFor(text, ELEVEN_DEFAULTS[g][0]);
     }
+    // Stop a beat after the last real word (or at the estimate when timings aren't available).
+    const stopAt = clip.end != null ? clip.end + 0.35 : clip.estimate ? Math.max(clip.estimate * 1.35, clip.estimate + 1.5) : Infinity;
     if (!isCurrent()) return;
     if (!this.audio) this.unlock();
     const a = this.audio;
@@ -156,16 +171,19 @@ const Eleven = {
         if (!isCurrent()) {
           a.pause();
           finish();
+        } else if (a.currentTime > stopAt) {
+          a.pause(); // trailing artifact — cut it off
+          finish();
         } else if (a.duration && isFinite(a.duration) && Date.now() - started > a.duration * 1000 + 4000) finish();
         else if (Date.now() - started > 120000) finish();
-      }, 200);
+      }, 50);
       // No word timings from an mp3: pulse at a natural speaking rhythm while it plays.
       const beat = onWord && setInterval(() => !a.paused && onWord(0.6 + Math.random() * 0.4), 230);
       const done0 = finish;
       finish = (err) => (clearInterval(beat), done0(err));
       a.onended = () => finish();
       a.onerror = () => finish(new Error("Couldn't play the ElevenLabs audio."));
-      a.src = url;
+      a.src = clip.url;
       onStart?.();
       a.play()?.catch?.((e) => finish(new Error(e.name === "NotAllowedError" ? "Your phone blocked the audio — tap the screen once." : "Couldn't play the ElevenLabs audio.")));
     });
@@ -600,6 +618,8 @@ class CloudListener {
     const floor = [];
     let loud = 0;
     let quietMs = 0;
+    // Delivery measurements for the analysis: speaking span, pauses, volume and pitch.
+    const m = (this.metrics = { first: 0, last: 0, pauses: 0, longestPause: 0, rms: [], pitches: [] });
     const t0 = performance.now();
     let last = t0;
     this.onState?.("listening");
@@ -621,12 +641,25 @@ class CloudListener {
         quietMs = 0;
         if (loud >= 3) {
           if (!this.spoke) this.onText?.(this.heardText ? this.heardText + " …" : "…");
+          if (this.spoke && quietMs === 0 && this._gap >= 300) {
+            m.pauses++;
+            m.longestPause = Math.max(m.longestPause, this._gap / 1000);
+          }
+          this._gap = 0;
           this.spoke = true;
           this.speechMs += dt;
+          m.first ||= now;
+          m.last = now;
+          m.rms.push(rms);
+          if (m.rms.length % 2 === 0) {
+            const f = Mic.pitch(buf, this.ctx.sampleRate, rms);
+            if (f > 70 && f < 400) m.pitches.push(f);
+          }
         }
       } else {
         loud = 0;
         quietMs += dt;
+        if (this.spoke) this._gap = quietMs;
         if (!this.spoke) {
           floor.push(rms); // keep learning the noise floor until you talk
           if (floor.length > 80) floor.shift();
@@ -667,7 +700,14 @@ class CloudListener {
     }
     const full = [this.heardText, text].filter(Boolean).join(" ").trim();
     this.onState?.("idle");
-    if (full) this.onTurn?.(full, Math.round(this.speechMs / 100) / 10);
+    // Duration = first word to last word (not just the loud moments), so pace (words per minute) is right.
+    const m = this.metrics || {};
+    const span = m.first && m.last > m.first ? (m.last - m.first) / 1000 + 0.3 : this.speechMs / 1000;
+    const mean = (a) => a.reduce((x, y) => x + y, 0) / (a.length || 1);
+    const sd = (a) => Math.sqrt(mean(a.map((x) => (x - mean(a)) ** 2)));
+    const semis = (m.pitches || []).map((f) => 12 * Math.log2(f / 100));
+    const audio = m.rms?.length > 10 ? { voicedSec: Math.round(this.speechMs / 100) / 10, pauses: m.pauses, longestPause: Math.round(m.longestPause * 10) / 10, volumeCv: Math.round((sd(m.rms) / (mean(m.rms) || 1)) * 100) / 100, pitchHz: Math.round(mean(m.pitches)) || 0, pitchVarSemis: semis.length > 5 ? Math.round(sd(semis) * 10) / 10 : null } : null;
+    if (full) this.onTurn?.(full, Math.round(span * 10) / 10, audio);
     else this.onState?.("needs-tap", "nothing heard");
   }
   stop() {
@@ -800,7 +840,8 @@ function textMetrics(turns) {
   return {
     turns: mine.length,
     words,
-    wpm: speakSec > 5 ? Math.round(words / (speakSec / 60)) : null,
+    // Only report pace when the timing is believable (bad timing data shouldn't produce "1165 wpm").
+    wpm: speakSec > 5 && words / (speakSec / 60) >= 60 && words / (speakSec / 60) <= 260 ? Math.round(words / (speakSec / 60)) : null,
     fillers: fillers.length,
     fillersPer100: words ? Math.round((fillers.length / words) * 1000) / 10 : 0,
     topFillers,
