@@ -51,6 +51,7 @@ function renderPractice(arg = "") {
   if (roleId) Object.assign(P.opts, { interviewType: "program", roleId });
   if (P.phase === "live" || P.phase === "analyzing") return renderLive();
   if (P.phase === "done") return renderPracticeResult();
+  if (P.clientMeeting) return renderClientBrief();
   renderPracticeSetup();
 }
 
@@ -65,9 +66,13 @@ const CHARACTERS = [
   { id: "omar", name: "Omar", gender: "male", vibe: "Thoughtful and steady", colors: ["#7c3aed", "#0ea5e9", "#ddd6fe"], eleven: "cjVigY5qzO86Huf0OWal", pitch: 0.95, rate: 0.96 },
   { id: "leo", name: "Leo", gender: "male", vibe: "Sharp and fast-paced", colors: ["#dc2626", "#d97706", "#fecdd3"], eleven: "CwhRBWXzGAHq8TQ4Fs17", pitch: 1, rate: 1.08 },
 ];
+// "Random": a rainbow orb that turns into a real character (with a matching voice) when the session starts.
+const RANDOM_CH = { id: "random", name: "Random", gender: "", vibe: "A surprise partner each time", colors: ["#f43f5e", "#22c55e", "#3b82f6"], random: true };
 function character(id = getSettings().character) {
+  if (id === "random") return RANDOM_CH;
   return CHARACTERS.find((c) => c.id === id) || CHARACTERS[0];
 }
+const realCharacter = (ch) => (ch.random ? CHARACTERS[Math.floor(Math.random() * CHARACTERS.length)] : ch);
 const LENGTHS = [
   [5, "5 min", "Quick"],
   [8, "8 min", "Standard"],
@@ -126,7 +131,7 @@ function renderPracticeSetup() {
       <div class="ps-copy"><div class="eyebrow">Spoken practice</div><h1>Rehearse it out loud,<br><span class="accent-text">then get coached.</span></h1>
         <p class="muted" id="ch-blurb">${esc(ch.name)} ${P.mode === "fp" && o.fpRole === "planner" ? "plays your client" : P.mode === "sales" ? "plays your buyer" : P.mode === "networking" ? "plays who you're meeting" : "interviews you"} — ${esc(ch.vibe.toLowerCase())}. Talk naturally; your answer sends when you pause.</p></div>
       <div class="ps-stage"><div class="orb-host" id="ps-orb"></div><button class="btn hear" id="ch-hear">${icon("play")} Hear ${esc(ch.name)}</button></div>
-      <div class="ch-row" id="ch-row">${CHARACTERS.map((c) => `<button class="ch ${c.id === ch.id ? "on" : ""}" data-ch="${c.id}" title="${esc(c.vibe)}"><span class="ch-dot" style="--c1:${c.colors[0]};--c2:${c.colors[1]};--c3:${c.colors[2]}"></span><span class="ch-name">${c.name}</span></button>`).join("")}</div>
+      <div class="ch-row" id="ch-row"><button class="ch ${ch.random ? "on" : ""}" data-ch="random" title="A surprise partner each time"><span class="ch-dot rainbow"></span><span class="ch-name">Random</span></button>${CHARACTERS.map((c) => `<button class="ch ${c.id === ch.id ? "on" : ""}" data-ch="${c.id}" title="${esc(c.vibe)}"><span class="ch-dot" style="--c1:${c.colors[0]};--c2:${c.colors[1]};--c3:${c.colors[2]}"></span><span class="ch-name">${c.name}</span></button>`).join("")}</div>
     </section>
     <div class="practice-setup">
       <section class="card ps-card">
@@ -148,7 +153,7 @@ function renderPracticeSetup() {
     </div>
     ${progressCardHTML()}
     ${hist.length ? `<section class="card"><h2>Recent sessions</h2><div class="list compact">${hist.map((s, i) => `<a class="list-row" href="${sessionHref(s, i)}">${ring(s.score, { size: 40 })}<div class="grow"><div class="row-title">${esc(s.label)}</div><div class="small muted">${new Date(s.at).toLocaleDateString()} · ${LEVEL_LABEL[s.difficulty] || ""}${s.thread ? " · replay" : ""}</div></div><span class="chev">${icon("chevron")}</span></a>`).join("")}</div></section>` : ""}
-    <div class="start-bar"><button class="btn primary" id="pr-start">Start with ${esc(ch.name)} ${icon("arrow")}</button></div>`;
+    <div class="start-bar"><button class="btn primary" id="pr-start">${ch.random ? "Start with a surprise partner" : "Start with " + esc(ch.name)} ${icon("arrow")}</button></div>`;
 
   // Structural changes re-render; small ones update in place (so the 3D orb keeps running).
   const set = (patch) => {
@@ -185,30 +190,34 @@ function renderPracticeSetup() {
   );
   // Characters + their 3D orb
   const host = document.getElementById("ps-orb");
-  Orb3D.mount(host, { colors: ch.colors, state: "idle" });
+  Orb3D.mount(host, { colors: ch.colors, state: "idle", rainbow: !!ch.random });
   app.querySelectorAll("[data-ch]").forEach((b) =>
     b.addEventListener("click", () => {
       const c = character(b.dataset.ch);
       Store.set("settings", { ...getSettings(), character: c.id });
       app.querySelectorAll("[data-ch]").forEach((x) => x.classList.toggle("on", x === b));
-      Orb3D.current?.setColors(c.colors);
+      if (c.random) Orb3D.current?.setRainbow(true);
+      else Orb3D.current?.setColors(c.colors);
       Orb3D.current?.pulse(1.2);
-      document.getElementById("ch-hear").innerHTML = `${icon("play")} Hear ${esc(c.name)}`;
-      document.getElementById("pr-start").innerHTML = `Start with ${esc(c.name)} ${icon("arrow")}`;
+      document.getElementById("ch-hear").innerHTML = `${icon("play")} ${c.random ? "Hear a random voice" : "Hear " + esc(c.name)}`;
+      document.getElementById("pr-start").innerHTML = `${c.random ? "Start with a surprise partner" : "Start with " + esc(c.name)} ${icon("arrow")}`;
       const bl = document.getElementById("ch-blurb");
-      bl.textContent = bl.textContent.replace(/^\S+/, c.name).replace(/— [^.]+\./, `— ${c.vibe.toLowerCase()}.`);
+      bl.textContent = bl.textContent.replace(/^\S+/, c.random ? "Someone new" : c.name).replace(/— [^.]+\./, `— ${c.vibe.toLowerCase()}.`);
       if (window.gsap && !Motion.reduced) gsap.fromTo(b.querySelector(".ch-dot"), { scale: 0.8 }, { scale: 1, duration: 0.5, ease: "elastic.out(1,0.45)" });
       b.scrollIntoView({ block: "nearest", inline: "center", behavior: "smooth" });
     })
   );
   document.getElementById("ch-hear").addEventListener("click", async (e) => {
     Voice.unlock();
-    const c = character();
+    const picked = character();
+    const c = realCharacter(picked);
     const btn = e.currentTarget;
     btn.disabled = true;
+    if (picked.random) Orb3D.current?.setColors(c.colors);
     Orb3D.current?.setState("speaking");
     await Voice.speak(`Hi Mason, I'm ${c.name}. ${P.mode === "fp" && P.opts.fpRole === "planner" ? "Thanks for meeting with me. I really need some help getting my money organized." : "Thanks for coming in today. So, tell me a little about yourself."}`, { persona: c, onWord: (v) => Orb3D.current?.pulse(v) });
     Orb3D.current?.setState("idle");
+    if (picked.random && character().random) Orb3D.current?.setRainbow(true);
     if (btn.isConnected) btn.disabled = false;
   });
   wireMicCheck();
@@ -230,6 +239,7 @@ function micCheckHTML() {
     <div class="row"><button class="btn small" id="mc-stt">${icon("message")} Test speech-to-text</button><span class="small muted grow" id="mc-stt-out">Say a sentence — your words should appear here.</span></div>
     <label class="field"><span>Voice ${Eleven.enabled() ? `<span class="pill">ElevenLabs</span>` : ""}</span><div class="row"><select id="mc-voice" style="flex:1"><option>Loading voices…</option></select><button class="btn small" id="mc-say">${icon("volume")} Sound check</button></div></label>
     <div class="sound-check" id="mc-sound" hidden></div>
+    ${Eleven.enabled() ? `<label class="field"><span>Speech-to-text</span><div class="segmented" id="mc-stt-eng">${[["scribe", "ElevenLabs Scribe (most accurate)"], ["browser", "Browser (free)"]].map(([v, l]) => `<button data-stt="${v}" class="${(getSettings().stt || "scribe") === v ? "on" : ""}">${l}</button>`).join("")}</div></label>` : ""}
     <label class="field"><span>Send my answer</span><div class="segmented" id="mc-send">${[["2", "After 2s pause"], ["3", "After 3s"], ["5", "After 5s"], ["tap", "When I tap"]].map(([v, l]) => `<button data-send="${v}" class="${String(getSettings().sendAfter || "3") === v ? "on" : ""}">${l}</button>`).join("")}</div></label>
     <label class="field"><span>Speaking speed</span><div class="segmented" id="mc-rate">${[0.9, 1, 1.1, 1.2].map((r) => `<button data-rate="${r}" class="${(getSettings().voiceRate || 1) === r ? "on" : ""}">${r === 1 ? "Normal" : r + "×"}</button>`).join("")}</div></label>
     <p class="small muted">${
@@ -264,6 +274,14 @@ function wireMicCheck() {
   else deviceVoices();
   sel.addEventListener("change", () => Store.set("settings", { ...getSettings(), [sel.dataset.kind === "eleven" ? "elevenVoice" : "voiceURI"]: sel.value }));
   document.getElementById("mc-say").addEventListener("click", (e) => soundCheck(e.currentTarget));
+  document.querySelectorAll("#mc-stt-eng [data-stt]").forEach((b) =>
+    b.addEventListener("click", () => {
+      Store.set("settings", { ...getSettings(), stt: b.dataset.stt });
+      Scribe.broken = null;
+      Scribe.fails = 0;
+      document.querySelectorAll("#mc-stt-eng button").forEach((x) => x.classList.toggle("on", x === b));
+    })
+  );
   document.querySelectorAll("#mc-send [data-send]").forEach((b) =>
     b.addEventListener("click", () => {
       Store.set("settings", { ...getSettings(), sendAfter: b.dataset.send });
@@ -279,18 +297,20 @@ function wireMicCheck() {
   // One-turn speech-to-text test: shows exactly what the browser hears (useful on iPhone).
   document.getElementById("mc-stt").addEventListener("click", (e) => {
     const out = document.getElementById("mc-stt-out");
-    if (!SR) return (out.textContent = "This browser can't do speech-to-text — use Safari on iPhone, or Chrome/Edge on PC/Mac.");
+    if (!SR && !Scribe.enabled()) return (out.textContent = "This browser can't do speech-to-text — use Safari on iPhone, or Chrome/Edge on PC/Mac.");
     if (wireMicCheck.l?.active) return wireMicCheck.l.flush();
     Voice.cancel();
     e.currentTarget.innerHTML = `${icon("stop")} Stop`;
     const btn = e.currentTarget;
     const reset = () => (btn.innerHTML = `${icon("message")} Test speech-to-text`);
-    wireMicCheck.l = new Listener({
+    wireMicCheck.l = new (Scribe.enabled() ? CloudListener : Listener)({
       silenceMs: 1800,
       onText: (t) => (out.textContent = t),
       onTurn: (t) => ((out.textContent = "Heard: “" + t + "” ✓"), reset()),
       onState: (st, err) => {
-        if (st === "listening") out.textContent = "Listening… say a sentence.";
+        if (st === "listening") out.textContent = "Listening… say a sentence" + (Scribe.enabled() ? " (ElevenLabs Scribe)." : ".");
+        if (st === "transcribing") out.textContent = "Transcribing…";
+        if (st === "stt-failed") (out.textContent = "Transcription failed: " + err), reset();
         if (st === "needs-tap") (out.textContent = out.textContent.startsWith("Heard") ? out.textContent : "Didn't catch anything — tap and try again."), reset();
         if (st === "error") (out.textContent = err === "not-allowed" || err === "service-not-allowed" ? "Blocked — allow the microphone and speech recognition for this site in your browser/phone settings." : "Mic error: " + err), reset();
       },
@@ -403,6 +423,7 @@ function practiceKind() {
 }
 function practiceLabel() {
   const o = P.opts;
+  if (P.sc?.clientId) return `Client — ${P.sc.counterpart.name}`;
   if (P.mode === "interview") return o.interviewType === "program" ? `Interview — ${findRole(o.roleId)?.r.org || "program"}` : `Interview — ${INTERVIEW_TYPES.find(([v]) => v === o.interviewType)?.[1]}`;
   if (P.mode === "fp") return o.fpRole === "planner" ? "Financial planning — client meeting" : "Financial planning — interview";
   if (P.mode === "sales") return o.sales === "choose" ? "Sales — your product" : o.sales === "apps" ? `Sales — ${MY_APPS[o.app][1]}` : "Sales — random product";
@@ -444,8 +465,8 @@ const LiveFX = {
       .from(q(".stage"), { y: 24, autoAlpha: 0, duration: 0.6 }, "<0.1")
       .from(q("#lv-avatar"), { scale: 0.6, autoAlpha: 0, duration: 0.7, ease: "back.out(2.2)" }, "<0.15")
       .from(q(".who, .you, .controls > *"), { y: 12, autoAlpha: 0, duration: 0.45, stagger: 0.06 }, "<0.2")
-      .from(q(".brief"), { x: 24, autoAlpha: 0, duration: 0.6 }, "<");
-    Motion.ensureVisible([...q(".live-top > *, .stage, #lv-avatar, .who, .you, .controls > *, .brief")], 2000);
+      .from(q(".brief, .desk"), { x: 24, autoAlpha: 0, duration: 0.6 }, "<");
+    Motion.ensureVisible([...q(".live-top > *, .stage, #lv-avatar, .who, .you, .controls > *, .brief, .desk")], 2000);
   },
   // Words appear in time with the voice.
   caption(text) {
@@ -516,7 +537,9 @@ async function startPractice(btn, adaptive) {
   const difficulty = o.difficulty === "adaptive" ? adaptive : o.difficulty;
   await busy(btn, async () => {
     const role = o.interviewType === "program" && findRole(o.roleId);
-    const ch = character();
+    const picked = character();
+    const ch = realCharacter(picked);
+    P.revealRandom = !!picked.random;
     const setupOpts = {
       interviewType: P.mode === "fp" ? "financial planning" : o.interviewType === "program" ? "program-specific" : o.interviewType,
       role: role ? `${role.r.org || role.c.name} — ${role.r.title}. ${role.r.about || ""}` : (o.roleText || "").trim(),
@@ -532,7 +555,18 @@ async function startPractice(btn, adaptive) {
     };
     const log = [];
     let sc = null;
-    if (AI.enabled()) {
+    // Client-book meeting: the client file supplies everything (no AI setup needed).
+    const cm = P.clientMeeting && Clients.find(P.clientMeeting.id);
+    if (cm) {
+      sc = Clients.scenario(cm, P.clientMeeting.type);
+      sc.offline = !AI.enabled();
+      sc.revealed = [];
+      sc.minutes = setupOpts.minutes;
+      sc.maxTurns = Math.round(setupOpts.minutes * 1.4) + 2;
+      setupOpts.client = { know: cm.truth.levels[0], numbers: cm.truth.levels[1], worry: cm.truth.levels[2] };
+      Scribe.extraTerms = [cm.first, cm.last, cm.partner, ...cm.kids.map((k) => k.name), cm.truth.pet?.[1]].filter(Boolean);
+      log.push(`client meeting: ${cm.first} ${cm.last} (${P.clientMeeting.type})`);
+    } else if (AI.enabled()) {
       try {
         sc = await AI.practiceSetup(kind, setupOpts);
         log.push("scenario written by Claude (" + AI.model() + ")");
@@ -543,11 +577,19 @@ async function startPractice(btn, adaptive) {
     } else log.push("no Claude key — using the built-in practice partner");
     sc ||= OFFLINE.setup(kind, setupOpts, difficulty);
     if (o.sales === "choose" && P.mode === "sales") sc.opening = "";
-    // The chosen character plays the part (their name, voice and orb).
-    const last = String(sc.counterpart?.name || "").split(" ").slice(1).join(" ");
-    sc.counterpart = { ...(sc.counterpart || {}), name: `${ch.name}${last ? " " + last : ""}`, gender: ch.gender };
-    if (sc.opening) sc.opening = sc.opening.replace(/\b(I'm|I am|my name is)\s+[A-Z][a-z]+/, `$1 ${ch.name}`);
-    Object.assign(P, { persona: ch, minutes: setupOpts.minutes, kind, difficulty, sc, setupOpts, thread: [], phase: "live", started: Date.now(), result: null, typing: !SR, micBlocked: false, pending: "", status: "", caption: "", orb: "tap", speaking: false, thinking: false, ending: false, log: [], seed: Math.random().toString(36).slice(2) });
+    let persona = ch;
+    if (cm) {
+      persona = sc.persona; // the client's own voice and colors
+      P.revealRandom = false;
+    } else {
+      // The chosen character plays the part (their name, voice and orb).
+      const last = String(sc.counterpart?.name || "").split(" ").slice(1).join(" ");
+      sc.counterpart = { ...(sc.counterpart || {}), name: `${ch.name}${last ? " " + last : ""}`, gender: ch.gender };
+      if (sc.opening) sc.opening = sc.opening.replace(/\b(I'm|I am|my name is)\s+[A-Z][a-z]+/, `$1 ${ch.name}`);
+    }
+    deskRefresh.shown = null;
+    deskRefresh.done = null;
+    Object.assign(P, { notes: "", deskTab: null, persona, minutes: setupOpts.minutes, kind, difficulty, sc, setupOpts, thread: [], phase: "live", started: Date.now(), result: null, typing: !SR, micBlocked: false, pending: "", status: "", caption: "", orb: "tap", speaking: false, thinking: false, ending: false, log: [], seed: Math.random().toString(36).slice(2) });
     log.forEach(plog);
     plog(`device: ${IS_IOS ? "iPhone/iPad" : "computer"} · speech-to-text ${SR ? "available" : "NOT available"} · voice ${Eleven.enabled() ? "ElevenLabs" : "device"}`);
     renderLive();
@@ -580,14 +622,28 @@ function renderLive() {
         </div>
         <div class="type-box" id="lv-typebox" ${P.typing ? "" : "hidden"}><textarea id="lv-text" placeholder="Type your reply…"></textarea><button class="btn primary" id="lv-typesend">Send</button></div>
       </section>
-      <aside class="card brief"><h3>Your brief</h3><p>${esc(sc.brief)}</p><h4>What great looks like</h4><ul class="small">${(sc.objectives || []).map((x) => `<li>${esc(x)}</li>`).join("")}</ul>
+      ${
+        sc.clientId
+          ? deskHTML()
+          : `<aside class="card brief"><h3>Your brief</h3><p>${esc(sc.brief)}</p><h4>What great looks like</h4><ul class="small">${(sc.objectives || []).map((x) => `<li>${esc(x)}</li>`).join("")}</ul>
         <details><summary>Transcript</summary><div class="transcript" id="lv-transcript"></div></details>
-        <details class="lv-logbox"><summary>Connection details</summary><pre id="lv-log"></pre><p class="small muted">If something goes wrong, this shows exactly what happened.</p></details></aside>
+        <details class="lv-logbox"><summary>Connection details</summary><pre id="lv-log"></pre><p class="small muted">If something goes wrong, this shows exactly what happened.</p></details></aside>`
+      }
     </div>`;
+  if (sc.clientId) wireDesk();
   drawTranscript();
   document.getElementById("lv-caption").textContent = P.caption || "";
   document.getElementById("lv-log").textContent = (P.log || []).join("\n");
-  Orb3D.mount(document.getElementById("lv-avatar"), { colors: (P.persona || character()).colors, state: { speaking: "speaking", live: "listening", thinking: "thinking" }[P.orb] || "idle" });
+  const orbColors = (P.persona || character()).colors;
+  Orb3D.mount(document.getElementById("lv-avatar"), { colors: orbColors, state: { speaking: "speaking", live: "listening", thinking: "thinking" }[P.orb] || "idle", rainbow: !!P.revealRandom }).then(() => {
+    // Random partner: the rainbow orb settles into the chosen character's colors.
+    if (!P.revealRandom) return;
+    P.revealRandom = false;
+    setTimeout(() => {
+      Orb3D.current?.setColors(orbColors);
+      Orb3D.current?.pulse(1);
+    }, 900);
+  });
   setStatus(P.status || "");
   clearInterval(renderLive._clock);
   // Clock + watchdogs: nothing can stay stuck.
@@ -607,15 +663,16 @@ function renderLive() {
       plog("time is well past — the next reply wraps up");
       P.ending = "soon";
     }
+    if (P.listening && P.listener?.level > 0.08) Orb3D.current?.pulse(P.listener.level * 0.6);
     if (P.speaking && Date.now() - P.speakSince > 75000) {
       plog("watchdog: speech never finished — moving on");
       Voice.cancel();
     }
-    if (P.listening && P.listener?.active && !P.nudged && !P.listener.text() && Date.now() - (P.listenSince || 0) > 15000) {
+    if (P.listening && P.listener?.active && !P.nudged && !P.listener.text() && !P.listener.spoke && Date.now() - (P.listenSince || 0) > 15000) {
       P.nudged = true;
       setStatus("Still listening — go ahead whenever you're ready. (Nothing heard yet: check the mic, or tap Type instead.)", "live");
     }
-    if (P.listening && P.listener && !P.listener.active && Date.now() - (P.listenSince || 0) > 2500) {
+    if (P.listening && !P.transcribing && P.listener && !P.listener.active && Date.now() - (P.listenSince || 0) > 2500) {
       plog("watchdog: mic stopped without telling us");
       P.listening = false;
       setOrb("tap");
@@ -693,13 +750,16 @@ function setOrb(state) {
   if (changed || state === "live") LiveFX.orb(state);
 }
 // Your turn: PC/Mac start listening right away (hands-free); iPhone waits for one tap (Apple's rule).
+// Can this device take spoken answers? (ElevenLabs Scribe or the browser's speech engine)
+const canListen = () => Scribe.enabled() || !!SR;
 function yourTurn() {
   if (P.phase !== "live" || !location.hash.startsWith("#practice")) return;
-  if (!SR || P.typing || P.micBlocked) {
+  if (!canListen() || P.typing || P.micBlocked) {
     setOrb("tap");
-    return setStatus(!SR ? "Type your reply below." : P.micBlocked ? "Tap the mic to try again, or type below." : "Your turn — type below or tap the mic.", "warn");
+    return setStatus(!canListen() ? "Type your reply below." : P.micBlocked ? "Tap the mic to try again, or type below." : "Your turn — type below or tap the mic.", "warn");
   }
-  if (IS_IOS) {
+  // iPhone's browser speech engine needs a tap every turn; recording for Scribe usually doesn't.
+  if (IS_IOS && !Scribe.enabled()) {
     setOrb("tap");
     return setStatus("Your turn — tap the mic and answer.", "live");
   }
@@ -717,6 +777,7 @@ function setStatus(text, kind = "") {
 function drawTranscript() {
   const el = document.getElementById("lv-transcript");
   if (el) el.innerHTML = P.thread.map((t) => `<p><strong>${t.from === "me" ? "You" : esc(P.sc.counterpart.name.split(" ")[0])}:</strong> ${esc(t.text)}</p>`).join("") || `<p class="muted small">Nothing yet.</p>`;
+  if (P.sc?.clientId) deskRefresh();
 }
 
 async function say(text) {
@@ -751,7 +812,7 @@ async function say(text) {
 
 function listen() {
   if (P.phase !== "live" || !location.hash.startsWith("#practice")) return;
-  if (!SR) return setStatus("Type your reply below.", "warn");
+  if (!canListen()) return setStatus("Type your reply below.", "warn");
   P.listener?.stop();
   P.micBlocked = false;
   const youText = document.getElementById("lv-you-text");
@@ -760,8 +821,9 @@ function listen() {
   P.listenSince = Date.now();
   const initial = P.pending || "";
   P.pending = "";
-  plog("mic on" + (initial ? " (continuing your answer)" : ""));
-  const me = new Listener({
+  const cloud = Scribe.enabled();
+  plog("mic on · " + (cloud ? "ElevenLabs Scribe" : "browser speech") + (initial ? " (continuing your answer)" : ""));
+  const me = new (cloud ? CloudListener : Listener)({
     silenceMs: sendDelayMs(),
     initial,
     onText: (t) => {
@@ -772,6 +834,7 @@ function listen() {
     },
     onTurn: (text, duration) => {
       if (P.listener !== me) return;
+      P.transcribing = false;
       plog(`you said ${text.split(/\s+/).length} words`);
       onMyTurn(text, duration);
     },
@@ -782,6 +845,22 @@ function listen() {
         setStatus(d === "tap" ? "Listening… tap the mic (or Send now) when you're done." : `Listening… take your time — it sends after a ${d}-second pause.`, "live");
         setOrb("live");
         P.netRetries = 0;
+      }
+      if (s === "transcribing") {
+        P.transcribing = true;
+        setStatus("Transcribing…");
+        setOrb("thinking");
+        return;
+      }
+      if (s === "stt-failed") {
+        plog("transcription failed: " + err);
+        P.listening = P.transcribing = false;
+        Scribe.fails = (Scribe.fails || 0) + 1;
+        if (Scribe.fails >= 2 && !Scribe.broken) Scribe.broken = err;
+        toast(Scribe.broken ? err + " Switching to the browser's speech recognition." : err + " Trying again next turn.");
+        setOrb("tap");
+        setStatus("Sorry — I didn't catch that. Tap the mic and say it again.", "warn");
+        return;
       }
       if (s === "needs-tap") {
         plog("mic paused by the browser" + (err ? " (" + err + ")" : "") + (kept ? " — kept your words" : ""));
@@ -864,7 +943,7 @@ async function endPractice() {
   if (P.thread.filter((t) => t.from === "me").length < 2) {
     Object.assign(P, { phase: "setup", ending: false });
     toast("Too short to analyze — answer at least two questions next time.");
-    return renderPracticeSetup();
+    return P.clientMeeting ? renderClientBrief() : renderPracticeSetup();
   }
   P.phase = "analyzing";
   setStatus("Analyzing your conversation…");
@@ -882,6 +961,12 @@ async function endPractice() {
     }
   }
   P.result ||= OFFLINE.analyze(P.sc, P.thread, metrics, P.kind);
+  // Client meeting: save what you learned and update the relationship.
+  P.clientReport = null;
+  if (P.sc.clientId) {
+    P.clientReport = Clients.recordMeeting(P.sc.clientId, P);
+    P.clientMeeting = null;
+  }
   const s = study();
   s.sessions = [{ id: uid(), mode: P.kind, label: practiceLabel(), score: P.result.overall, difficulty: P.difficulty, at: Date.now(), metrics, result: P.result, title: P.sc.title, counterpart: P.sc.counterpart, thread: P.thread.map(({ from, text }) => ({ from, text })), secs: Math.round((Date.now() - P.started) / 1000) }, ...(s.sessions || [])].slice(0, 40);
   saveStudy(s);
@@ -907,7 +992,12 @@ function renderPracticeResult(saved) {
   const fillerHi = (t) => esc(t).replace(FILLERS, (f) => `<mark>${f}</mark>`);
   app.innerHTML = `
     <div class="page-head"><div><div class="eyebrow">${esc(X.label)} · ${LEVEL_LABEL[X.diff] || ""}${X.at ? " · " + new Date(X.at).toLocaleDateString() : ""}</div><h1>${esc(X.title)}</h1><p class="muted">${esc(r.verdict)}</p></div>
-      <div class="row">${live ? `<button class="btn primary" id="pr-again">${icon("refresh")} Practice again</button><button class="btn" id="pr-new">New setup</button>` : `<a class="btn" href="#practice">‹ Practice</a>`}</div></div>
+      <div class="row">${live && P.sc?.clientId ? `<a class="btn primary" href="#client/${P.sc.clientId}">${icon("arrow")} Open ${esc(P.sc.counterpart.name.split(" ")[0])}'s file</a>` : live ? `<button class="btn primary" id="pr-again">${icon("refresh")} Practice again</button><button class="btn" id="pr-new">New setup</button>` : `<a class="btn" href="#practice">‹ Practice</a>`}</div></div>
+    ${
+      live && P.clientReport
+        ? `<section class="card client-report"><div class="metrics">${metricCard("New facts collected", P.clientReport.found, `${P.clientReport.collected} of ${P.clientReport.total} total`, P.clientReport.found ? "good-text" : "warn-text")}${metricCard("Relationship", (P.clientReport.delta >= 0 ? "+" : "") + P.clientReport.delta, P.clientReport.rem.length ? "remembered " + P.clientReport.rem.join(", ") : "from this meeting", P.clientReport.delta >= 0 ? "good-text" : "bad-text")}</div></section>`
+        : ""
+    }
     <div class="result-grid">
       <section class="card score-hero">${ring(r.overall, { size: 132, label: r.overall })}<div><div class="k">Overall</div><p>${esc(r.outcome || "")}</p></div></section>
       <section class="card"><h2>Scores</h2>${r.categories.map((c) => `<div class="rubric-row"><div class="spread small"><strong>${esc(c.name)}</strong><span>${c.score}</span></div><div class="bar"><i style="width:${c.score}%"></i></div><div class="small muted">${esc(c.note)}</div></div>`).join("")}</section>
@@ -943,7 +1033,7 @@ function renderPracticeResult(saved) {
     }
     ${progressCardHTML(X.kind)}`;
   document.getElementById("pr-replay")?.addEventListener("click", (e) => replayThread(X.thread, X.cp, e.currentTarget));
-  if (!live) return;
+  if (!live || P.sc?.clientId) return;
   document.getElementById("pr-again").onclick = (e) => {
     P.phase = "setup";
     startPractice(e.currentTarget, adaptiveLevel(practiceKind()));

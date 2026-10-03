@@ -266,6 +266,7 @@ function renderStudy() {
         return `<a class="card practice-cta" href="#practice/${m.id}"><div class="track-icon">${icon(m.icon)}</div><div class="grow"><h3>${m.label}</h3><p class="small muted">${l ? `Last score ${l.score}/100` : esc(m.blurb)}</p></div><span class="chev">${icon("chevron")}</span></a>`;
       }).join("")}
       <a class="card practice-cta" href="#brand/pitch"><div class="track-icon">${icon("mic")}</div><div class="grow"><h3>Elevator pitch</h3><p class="small muted">Your 30-second “tell me about yourself”, timed and scored.</p></div><span class="chev">${icon("chevron")}</span></a>
+      <a class="card practice-cta" href="#clients"><div class="track-icon">${icon("users")}</div><div class="grow"><h3>Client book</h3><p class="small muted">Ongoing clients: meetings, a plan you build, simulations, life changes and a relationship bar.</p></div><span class="chev">${icon("chevron")}</span></a>
       <a class="card practice-cta" href="#cases"><div class="track-icon">${icon("briefcase")}</div><div class="grow"><h3>Case studies</h3><p class="small muted">Stock pitches, valuations, client plans and strategy cases — graded with model answers.</p></div><span class="chev">${icon("chevron")}</span></a></div></section>
     ${TRACK_GROUPS.map(([name, ids]) => {
       const list = ids.map((id) => TRACKS.find((t) => t.id === id)).filter(Boolean);

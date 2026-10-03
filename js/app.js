@@ -18,6 +18,7 @@ const NAV = [
   { id: "studio", icon: "file", label: "Resume Studio", short: "Studio" },
   { id: "skills", icon: "award", label: "Skill Bank", short: "Skills", more: true },
   { id: "study", icon: "book", label: "Study", short: "Study" },
+  { id: "clients", icon: "users", label: "Client book", short: "Clients", more: true },
   { id: "markets", icon: "trend", label: "Markets", short: "Markets", more: true },
   { id: "brand", icon: "users", label: "Pitch & LinkedIn", short: "Pitch", more: true },
   { id: "settings", icon: "settings", label: "Settings", short: "Settings", more: true, bottom: true },
@@ -143,14 +144,14 @@ function empty(msg) {
 }
 
 // ---------- router ----------
-const NAV_FOR = { dashboard: "dashboard", tracker: "tracker", internships: "internships", internship: "internships", generate: "internships", colleges: "colleges", college: "colleges", skills: "skills", coach: "skills", resumes: "studio", resume: "studio", studio: "studio", settings: "settings", study: "study", lesson: "study", roleplay: "study", mock: "study", practice: "study", quiz: "study", profile: "colleges", session: "study", exam: "study", cases: "study", case: "study", markets: "markets", brand: "brand" };
+const NAV_FOR = { dashboard: "dashboard", tracker: "tracker", internships: "internships", internship: "internships", generate: "internships", colleges: "colleges", college: "colleges", skills: "skills", coach: "skills", resumes: "studio", resume: "studio", studio: "studio", settings: "settings", study: "study", lesson: "study", roleplay: "study", mock: "study", practice: "study", quiz: "study", profile: "colleges", session: "study", exam: "study", cases: "study", case: "study", markets: "markets", brand: "brand", clients: "clients", client: "clients" };
 function route() {
   const [view = "dashboard", ...rest] = location.hash.slice(1).split("/");
   const id = decodeURIComponent(rest.join("/"));
   document.querySelectorAll("#nav a").forEach((a) => a.classList.toggle("active", a.dataset.nav === (NAV_FOR[view] || "dashboard")));
   document.getElementById("nav-more")?.classList.toggle("active", !!document.querySelector("#nav a.more-item.active"));
   moveNavIndicator();
-  const views = { dashboard: renderDashboard, internships: renderInternships, internship: renderInternship, generate: renderGenerate, colleges: renderColleges, college: renderCollege, skills: renderSkills, coach: renderCoach, resumes: renderResumes, resume: renderResumeView, settings: renderSettings, pair: renderPair, tracker: renderTracker, study: (id) => (id ? renderTrack(id) : renderStudy()), lesson: renderLesson, roleplay: () => go("practice/networking"), mock: () => go("practice/interview"), practice: renderPractice, quiz: renderQuiz, profile: renderCollegeProfile, studio: renderStudio, markets: renderMarkets, brand: renderBrand, session: renderSession, exam: renderExam, cases: renderCases, case: renderCase };
+  const views = { dashboard: renderDashboard, internships: renderInternships, internship: renderInternship, generate: renderGenerate, colleges: renderColleges, college: renderCollege, skills: renderSkills, coach: renderCoach, resumes: renderResumes, resume: renderResumeView, settings: renderSettings, pair: renderPair, tracker: renderTracker, study: (id) => (id ? renderTrack(id) : renderStudy()), lesson: renderLesson, roleplay: () => go("practice/networking"), mock: () => go("practice/interview"), practice: renderPractice, quiz: renderQuiz, profile: renderCollegeProfile, studio: renderStudio, markets: renderMarkets, brand: renderBrand, session: renderSession, exam: renderExam, cases: renderCases, case: renderCase, clients: renderClients, client: renderClient };
   // Leaving a page stops any live mic, dictation, replay or spoken question.
   if (dictate.rec) dictate.rec.stop();
   try {

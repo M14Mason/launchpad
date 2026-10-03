@@ -124,13 +124,24 @@ const OFFLINE = (() => {
       // A beginner asks what jargon means (once per term).
       const jargon = (last.match(/\b(roth|ira|401\(?k\)?|index fund|etf|asset allocation|diversif\w*|compound(ing)?|expense ratio|liquidity|apr)\b/i) || [])[0];
       sc.asked ||= [];
-      if (jargon && (c.know || 2) <= 2 && !sc.asked.includes(jargon.toLowerCase())) {
+      // (Not when you asked about their own accounts — clients know what they have, even if not the jargon.)
+      if (jargon && (c.know || 2) <= 2 && !sc.asked.includes(jargon.toLowerCase()) && !(sc.clientFacts || []).some(([re], i) => re.test(last) && !sc.revealed.includes(i))) {
         sc.asked.push(jargon.toLowerCase());
         return { reply: `Sorry — what's ${/^[aeiou]/i.test(jargon) ? "an" : "a"} ${jargon}? I've heard of it but I don't really get it.`, end: false };
       }
-      const hit = CLIENT.facts.find(([re], i) => re.test(last) && !sc.revealed.includes(i));
-      if (hit) sc.revealed.push(CLIENT.facts.indexOf(hit));
-      const vague = (c.numbers || 2) <= 2 ? pick(["Honestly I'm not sure exactly, but ", "I think it's something like — ", "Don't quote me, but "]) : "";
+      const FACTS = sc.clientFacts || CLIENT.facts;
+      // A client-book client answers every topic you asked about in this message (from their file).
+      if (sc.clientFacts) {
+        // Small talk and process talk get a natural reply, not a data dump.
+        if (/\b(nice to meet|how are you|thanks for (coming|meeting)|how (I|this) work|the process|today we|agenda)\b/i.test(last) && !/\?.*\b(rent|debt|sav|income|pay|401|goal|risk)/i.test(last))
+          return { reply: pick(["Nice to meet you too. That sounds good — where do you want to start?", "Thanks. Honestly I'm a little nervous, I've never done this before. Go ahead.", "Okay, that makes sense. I'm ready when you are."]), end: false };
+        const hits = FACTS.map((f, i) => [f, i]).filter(([[re], i]) => re.test(last) && !sc.revealed.includes(i)).slice(0, 3);
+        hits.forEach(([, i]) => sc.revealed.push(i));
+        if (hits.length) return { reply: hits.map(([f]) => f[1]).join(" ") + ((c.worry || 3) >= 4 && Math.random() < 0.3 ? " Sorry — this stuff stresses me out." : ""), end: false };
+      }
+      const hit = FACTS.find(([re], i) => re.test(last) && !sc.revealed.includes(i));
+      if (hit) sc.revealed.push(FACTS.indexOf(hit));
+      const vague = !sc.clientFacts && (c.numbers || 2) <= 2 ? pick(["Honestly I'm not sure exactly, but ", "I think it's something like — ", "Don't quote me, but "]) : "";
       const worried = (c.worry || 3) >= 4 && Math.random() < 0.35 ? " Sorry, this stuff just stresses me out." : "";
       if (hit) return { reply: vague + (vague && !/^I\b/.test(hit[1]) ? hit[1].charAt(0).toLowerCase() + hit[1].slice(1) : hit[1]) + worried, end: false };
       if (mine.length >= 9) return { reply: `${sc.revealed.length >= 4 ? "This actually helps a lot. I feel like I have a plan." : "Okay... I think I need to think about it more."} Thanks for your time.`, end: true };

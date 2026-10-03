@@ -470,6 +470,7 @@ function paletteItems() {
     ["Mock interview", "#practice/interview", "mic"],
     ["Financial planning practice", "#practice/fp", "trend"],
     ["Sales practice", "#practice/sales", "target"],
+    ["Client book", "#clients", "users"],
     ["Market brief", "#markets/brief", "trend"],
     ["Paper trading", "#markets/paper", "gauge"],
     ["Elevator pitch", "#brand/pitch", "mic"],

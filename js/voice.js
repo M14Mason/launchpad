@@ -129,7 +129,8 @@ const Eleven = {
     let url;
     try {
       const chosen = getSettings().elevenVoice;
-      url = await this.audioFor(text, chosen && chosen !== "auto" ? chosen : voiceId || (await this.voiceFor(gender, seed)));
+      // A character always uses its own voice (so Nora always sounds like Nora); the Settings voice is for everything else.
+      url = await this.audioFor(text, voiceId || (chosen && chosen !== "auto" ? chosen : await this.voiceFor(gender, seed)));
     } catch (e) {
       if (e.kind === "key") this.broken = e.message; // don't keep failing (and waiting) on every line
       if (e.kind !== "voice") throw e;
@@ -228,7 +229,11 @@ const Voice = {
     // Characters get a voice that matches them; your chosen voice is used when it fits.
     const g = /^m/i.test(gender) ? "male" : "female";
     if (mine && this.genderOf(mine) === g) return mine;
-    return list.find((v) => this.genderOf(v) === g) || mine || list[0] || null;
+    const match = list.find((v) => this.genderOf(v) === g);
+    if (match) return match;
+    // No voice of that gender on this device: use one we can't classify and shift its pitch (see speak).
+    this._noMatch = g;
+    return list.find((v) => !this.genderOf(v)) || mine || list[0] || null;
   },
   genderOf(v) {
     const n = v.name;
@@ -241,6 +246,11 @@ const Voice = {
   // (cancelling it right away can leave Safari's speech engine silent until reload).
   unlock() {
     Eleven.unlock();
+    // One shared audio engine, started inside a tap, so speech-to-text can measure your voice later.
+    try {
+      Scribe.ctx ||= new (window.AudioContext || window.webkitAudioContext)();
+      if (Scribe.ctx.state !== "running") Scribe.ctx.resume?.();
+    } catch {}
     try {
       if (this._unlocked || !this.supported || !IS_IOS) return;
       const u = new SpeechSynthesisUtterance(".");
@@ -290,7 +300,10 @@ const Voice = {
     if (!isCurrent()) return;
     this._talking = true;
     if (!this.supported) return;
+    this._noMatch = null;
     const voice = await this.pick(gender);
+    // If the device has no matching voice, nudge pitch toward the character's gender.
+    const pitchShift = this._noMatch && voice ? (this._noMatch === "female" ? (this.genderOf(voice) === "male" ? 1.35 : 1.15) : this.genderOf(voice) === "female" ? 0.7 : 0.88) : 1;
     // Sentence by sentence: sounds more natural and avoids Chrome's long-utterance cutoff.
     const parts = String(text)
       .replace(/\s+/g, " ")
@@ -306,7 +319,7 @@ const Voice = {
           u.lang = voice.lang;
         }
         u.rate = Math.min(1.6, (getSettings().voiceRate || 1) * (persona?.rate || 1));
-        u.pitch = persona?.pitch || 1;
+        u.pitch = Math.max(0.5, Math.min(2, (persona?.pitch || 1) * pitchShift));
         if (onWord) u.onboundary = (e) => e.name !== "sentence" && onWord(0.7 + Math.random() * 0.3);
         let began = false;
         let quiet = 0;
@@ -476,6 +489,190 @@ class Listener {
     try {
       rec?.abort();
     } catch {}
+    this.onState?.("idle");
+  }
+}
+
+// ---------- ElevenLabs Scribe: accurate speech-to-text ----------
+// Records your answer, finds where you stop talking from the audio level (no browser speech engine),
+// then sends the clip to ElevenLabs for a transcript. Same interface as Listener.
+const Scribe = {
+  models: ["scribe_v1", "scribe_v2"],
+  enabled() {
+    return Eleven.enabled() && getSettings().stt !== "browser" && !this.broken && !!navigator.mediaDevices?.getUserMedia && typeof MediaRecorder !== "undefined";
+  },
+  keyterms() {
+    const base = ["Roth IRA", "401(k)", "index fund", "emergency fund", "compound interest", "asset allocation", "Alpaca", "RSI", "EMA", "ATR", "backtest", "Flask", "Python", "Canyon Crest", "Keen", "Titan", "ETF", "S&P 500", "APR", "budget"];
+    return [...base, ...(Scribe.extraTerms || [])].slice(0, 100);
+  },
+  async transcribe(blob) {
+    let lastErr;
+    for (const model of this.models) {
+      for (const withTerms of [true, false]) {
+        const fd = new FormData();
+        fd.append("model_id", model);
+        fd.append("language_code", "en");
+        fd.append("tag_audio_events", "false");
+        if (withTerms) for (const t of this.keyterms()) fd.append("keyterms", t);
+        fd.append("file", blob, "answer." + (/mp4|aac/.test(blob.type) ? "mp4" : /ogg/.test(blob.type) ? "ogg" : "webm"));
+        let res;
+        try {
+          const ctl = new AbortController();
+          const timer = setTimeout(() => ctl.abort(), 30000);
+          res = await fetch("https://api.elevenlabs.io/v1/speech-to-text", { method: "POST", headers: { "xi-api-key": (getSettings().elevenKey || "").trim() }, body: fd, signal: ctl.signal });
+          clearTimeout(timer);
+        } catch (e) {
+          throw Object.assign(new Error(e.name === "AbortError" ? "Transcription took too long." : "Couldn't reach ElevenLabs for transcription."), { kind: "temp" });
+        }
+        if (res.ok) {
+          const j = await res.json();
+          return String(j.text || "").replace(/\s+/g, " ").trim();
+        }
+        let detail = "";
+        try {
+          const j = await res.json();
+          detail = JSON.stringify(j.detail || j).toLowerCase();
+        } catch {}
+        lastErr = Object.assign(new Error(`ElevenLabs transcription error ${res.status}`), { status: res.status, detail });
+        if (res.status === 401 || res.status === 402 || /quota|credit|unusual|permission/.test(detail)) {
+          this.broken = /permission/.test(detail) ? "Your ElevenLabs key needs the Speech to Text permission." : /quota|credit/.test(detail) ? "ElevenLabs is out of credits." : "ElevenLabs rejected transcription.";
+          throw Object.assign(new Error(this.broken), { kind: "key" });
+        }
+        if (res.status === 422 && withTerms) continue; // try again without key terms
+        if (!/model/.test(detail)) throw lastErr;
+        break; // try the next model
+      }
+    }
+    throw lastErr || new Error("Transcription failed.");
+  },
+};
+
+class CloudListener {
+  constructor({ onText, onTurn, onState, silenceMs = 3000, initial = "" }) {
+    Object.assign(this, { onText, onTurn, onState, silenceMs, initial });
+    this.active = false;
+    this.heardText = initial || "";
+  }
+  get supported() {
+    return true;
+  }
+  text() {
+    return this.heardText;
+  }
+  async start() {
+    this.active = true;
+    this.chunks = [];
+    this.speechMs = 0;
+    this.spoke = false;
+    try {
+      const id = getSettings().micId;
+      const audio = { echoCancellation: true, noiseSuppression: true, autoGainControl: true, channelCount: 1 };
+      if (id) audio.deviceId = { ideal: id };
+      this.stream = await navigator.mediaDevices.getUserMedia({ audio });
+    } catch (e) {
+      this.active = false;
+      return this.onState?.(e.name === "NotAllowedError" ? (IS_IOS ? "needs-tap" : "error") : "error", e.name === "NotAllowedError" ? "not-allowed" : "audio-capture");
+    }
+    if (!this.active) return this.release();
+    const types = ["audio/webm;codecs=opus", "audio/webm", "audio/mp4", "audio/ogg"];
+    const mimeType = types.find((t) => MediaRecorder.isTypeSupported?.(t)) || "";
+    this.rec = new MediaRecorder(this.stream, mimeType ? { mimeType } : undefined);
+    this.rec.ondataavailable = (e) => e.data?.size && this.chunks.push(e.data);
+    this.rec.start(250);
+    // Voice activity from the audio level: learns the room's noise floor, then waits for you to stop.
+    try {
+      Scribe.ctx ||= new (window.AudioContext || window.webkitAudioContext)();
+      if (Scribe.ctx.state !== "running") await Promise.race([Scribe.ctx.resume(), new Promise((r) => setTimeout(r, 600))]);
+    } catch {}
+    if (Scribe.ctx?.state !== "running") {
+      // The browser hasn't allowed audio yet: one tap fixes it.
+      this.active = false;
+      this.release();
+      return this.onState?.("needs-tap", "audio-locked");
+    }
+    this.ctx = Scribe.ctx;
+    const src = this.ctx.createMediaStreamSource(this.stream);
+    this.src = src;
+    const an = this.ctx.createAnalyser();
+    an.fftSize = 1024;
+    src.connect(an);
+    const buf = new Float32Array(an.fftSize);
+    const floor = [];
+    let loud = 0;
+    let quietMs = 0;
+    const t0 = performance.now();
+    let last = t0;
+    this.onState?.("listening");
+    this.timer = setInterval(() => {
+      if (!this.active) return;
+      an.getFloatTimeDomainData(buf);
+      let sum = 0;
+      for (const x of buf) sum += x * x;
+      const rms = Math.sqrt(sum / buf.length);
+      const now = performance.now();
+      const dt = now - last;
+      last = now;
+      this.level = Math.min(1, rms * 10);
+      if (now - t0 < 400) return void floor.push(rms);
+      const base = floor.length ? [...floor].sort((a, b) => a - b)[Math.floor(floor.length / 2)] : 0.005;
+      const thr = Math.max(0.01, base * 2.8);
+      if (rms > thr) {
+        loud++;
+        quietMs = 0;
+        if (loud >= 3) {
+          if (!this.spoke) this.onText?.(this.heardText ? this.heardText + " …" : "…");
+          this.spoke = true;
+          this.speechMs += dt;
+        }
+      } else {
+        loud = 0;
+        quietMs += dt;
+        if (!this.spoke) {
+          floor.push(rms); // keep learning the noise floor until you talk
+          if (floor.length > 80) floor.shift();
+        }
+      }
+      if (this.spoke && this.speechMs > 350 && isFinite(this.silenceMs) && quietMs > this.silenceMs) this.flush();
+      if (now - t0 > 180000) this.flush(); // 3-minute cap per answer
+    }, 50);
+  }
+  release() {
+    clearInterval(this.timer);
+    try {
+      this.rec?.state !== "inactive" && this.rec?.stop();
+    } catch {}
+    this.stream?.getTracks().forEach((t) => t.stop());
+    try {
+      this.src?.disconnect();
+    } catch {}
+    this.stream = this.ctx = this.src = null; // the shared audio engine stays open for the next turn
+  }
+  // Stop recording and transcribe what was said.
+  async flush() {
+    if (!this.active) return;
+    this.active = false;
+    clearInterval(this.timer);
+    const spoke = this.spoke;
+    const done = new Promise((r) => (this.rec ? (this.rec.onstop = r) : r()));
+    this.release();
+    await done;
+    if (!spoke && !this.heardText) return this.onState?.("needs-tap");
+    this.onState?.("transcribing");
+    const blob = new Blob(this.chunks, { type: this.rec?.mimeType || "audio/webm" });
+    let text = "";
+    try {
+      text = spoke ? await Scribe.transcribe(blob) : "";
+    } catch (e) {
+      return this.onState?.("stt-failed", e.message, this.heardText);
+    }
+    const full = [this.heardText, text].filter(Boolean).join(" ").trim();
+    this.onState?.("idle");
+    if (full) this.onTurn?.(full, Math.round(this.speechMs / 100) / 10);
+    else this.onState?.("needs-tap", "nothing heard");
+  }
+  stop() {
+    this.active = false;
+    this.release();
     this.onState?.("idle");
   }
 }

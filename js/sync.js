@@ -4,7 +4,7 @@
 // the gist is private to Mason's account (and anyone he gives its link to).
 
 const Sync = {
-  KEYS: ["bank", "aiCompanies", "practice", "coach", "resumes", "research", "settings", "tracker", "essays", "collegeProfile", "study", "markets", "brand"],
+  KEYS: ["bank", "aiCompanies", "practice", "coach", "resumes", "research", "settings", "tracker", "essays", "collegeProfile", "study", "markets", "brand", "clients"],
   FILE: "launchpad-sync-v2.json",
   OLD_FILE: "launchpad-sync.json", // passphrase-encrypted version (before Oct 2026) — removed on first sync
   DESC: "Launchpad sync",

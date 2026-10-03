@@ -65,10 +65,14 @@ const Orb3D = (() => {
       setState(s) {
         node.dataset.state = s;
       },
+      setRainbow(on) {
+        node.classList.toggle("rainbow", on);
+      },
       pulse() {
         node.animate?.([{ transform: "scale(1.06)" }, { transform: "scale(1)" }], { duration: 260, easing: "ease-out" });
       },
       setColors(c) {
+        node.classList.remove("rainbow");
         node.style.setProperty("--c1", c[0]);
         node.style.setProperty("--c2", c[1]);
         node.style.setProperty("--c3", c[2]);
@@ -79,7 +83,7 @@ const Orb3D = (() => {
     };
   }
 
-  async function mount(el, { colors = ["#6d5dfc", "#22d3ee", "#a78bfa"], state = "idle" } = {}) {
+  async function mount(el, { colors = ["#6d5dfc", "#22d3ee", "#a78bfa"], state = "idle", rainbow = false } = {}) {
     current?.destroy();
     let THREE = window.THREE;
     if (!THREE && !Motion.reduced) {
@@ -89,14 +93,20 @@ const Orb3D = (() => {
       } catch {}
     }
     if (!el.isConnected) return null;
-    if (!THREE || Motion.reduced) return (current = cssFallback(el, colors));
+    if (!THREE || Motion.reduced) {
+      current = cssFallback(el, colors);
+      if (rainbow) current.setRainbow(true);
+      return current;
+    }
     const canvas = document.createElement("canvas");
     canvas.className = "orb-canvas";
     let renderer;
     try {
       renderer = new THREE.WebGLRenderer({ canvas, alpha: true, antialias: true, powerPreference: "low-power" });
     } catch {
-      return (current = cssFallback(el, colors));
+      current = cssFallback(el, colors);
+      if (rainbow) current.setRainbow(true);
+      return current;
     }
     el.innerHTML = "";
     el.appendChild(canvas);
@@ -118,7 +128,8 @@ const Orb3D = (() => {
     const mat = new THREE.ShaderMaterial({ uniforms, vertexShader: VERT, fragmentShader: FRAG });
     const mesh = new THREE.Mesh(geo, mat);
     scene.add(mesh);
-    const live = { ...STATES[state], kick: 0 };
+    const live = { ...STATES[state], kick: 0, rainbow: rainbow ? 1 : 0 };
+    const hsl = new THREE.Color();
     const resize = () => {
       const s = el.clientWidth || 200;
       renderer.setSize(s, s, false);
@@ -144,6 +155,12 @@ const Orb3D = (() => {
         t += dt * live.speed;
         live.kick *= Math.pow(0.02, dt); // ripples fade out quickly
         uniforms.uTime.value = t;
+        // Rainbow mode ("Random" character): hues sweep around the color wheel.
+        if (live.rainbow > 0.01)
+          ["uC1", "uC2", "uC3"].forEach((k, i) => {
+            hsl.setHSL((t * 0.08 + i * 0.33) % 1, 0.85, 0.58);
+            uniforms[k].value.lerp(hsl, Math.min(1, live.rainbow * dt * 6));
+          });
         uniforms.uAmp.value = live.amp + live.kick * 0.07;
         uniforms.uFreq.value = live.freq;
         uniforms.uGlow.value = live.glow + live.kick * 0.5;
@@ -167,7 +184,11 @@ const Orb3D = (() => {
       pulse(v = 1) {
         live.kick = Math.min(1, live.kick + v * 0.35);
       },
+      setRainbow(on) {
+        live.rainbow = on ? 1 : 0;
+      },
       setColors(c) {
+        live.rainbow = 0;
         const to = c.map((x) => new THREE.Color(x));
         if (window.gsap && !Motion.reduced) ["uC1", "uC2", "uC3"].forEach((k, i) => window.gsap.to(uniforms[k].value, { r: to[i].r, g: to[i].g, b: to[i].b, duration: 0.7, ease: "power2.inOut" }));
         else ["uC1", "uC2", "uC3"].forEach((k, i) => uniforms[k].value.copy(to[i]));
