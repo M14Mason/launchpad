@@ -59,7 +59,8 @@ const LocalAI = {
     return this._tts;
   },
   // Kokoro voices that suit each practice character (American English).
-  VOICES: { nora: "af_heart", elena: "af_sarah", jade: "af_bella", grace: "af_kore", marcus: "am_michael", theo: "am_puck", omar: "am_eric", leo: "am_fenrir" },
+  // Only Kokoro's best-sounding voices (the lower-graded ones are what sound robotic).
+  VOICES: { nora: "af_heart", elena: "af_bella", jade: "af_nicole", grace: "af_aoede", marcus: "am_michael", theo: "am_puck", omar: "am_fenrir", leo: "bm_george" },
   voiceFor(persona, gender) {
     if (persona?.id && this.VOICES[persona.id]) return this.VOICES[persona.id];
     return /^m/i.test(gender || persona?.gender || "") ? "am_michael" : "af_heart";
@@ -67,7 +68,7 @@ const LocalAI = {
   async clip(text, voice) {
     const tts = await this.tts();
     const t0 = performance.now();
-    const audio = await tts.generate(text, { voice, speed: Math.min(1.25, Math.max(0.8, getSettings().voiceRate || 1)) });
+    const audio = await tts.generate(text, { voice, speed: Math.min(1.3, Math.max(0.85, (getSettings().voiceRate || 1) * 1.06)) });
     const secs = audio.audio.length / audio.sampling_rate;
     // Real-time factor: if this device makes speech much slower than it plays, prefer another voice.
     this.rtf = (performance.now() - t0) / 1000 / Math.max(0.5, secs);
@@ -81,7 +82,7 @@ const LocalAI = {
       this._asr = (async () => {
         const { pipeline } = await import(TRANSFORMERS_URL);
         const make = (device) =>
-          pipeline("automatic-speech-recognition", "onnx-community/whisper-base.en", {
+          pipeline("automatic-speech-recognition", this.asrModel(device), {
             device,
             dtype: device === "webgpu" ? { encoder_model: "fp32", decoder_model_merged: "q4" } : "q8",
             progress_callback: this._track("ears"),
@@ -104,6 +105,21 @@ const LocalAI = {
       });
     }
     return this._asr;
+  },
+  // Phones without graphics acceleration use the small model: about 4x faster, still good for clear speech.
+  asrModel(device) {
+    return device === "webgpu" || !(IS_IOS || /Android/i.test(navigator.userAgent)) ? "onnx-community/whisper-base.en" : "onnx-community/whisper-tiny.en";
+  },
+  // Raw 16 kHz audio straight from the mic (no file decoding) — used for live, phrase-by-phrase transcription.
+  async transcribePCM(pcm) {
+    const asr = await this.asr();
+    const out = await asr(pcm, pcm.length > 16000 * 28 ? { chunk_length_s: 30, stride_length_s: 5 } : {});
+    const t = String(out?.text || "")
+      .replace(/\[[^\]]*\]|\([^)]*\)/g, " ")
+      .replace(/\s+/g, " ")
+      .trim();
+    // Whisper sometimes "hears" these in near-silence.
+    return /^(you|thank you\.?|thanks for watching!?|bye\.?|\.+)$/i.test(t) ? "" : t;
   },
   // Decode a recording to 16 kHz mono (what Whisper expects).
   async toPCM16k(blob) {

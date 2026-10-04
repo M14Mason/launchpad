@@ -247,6 +247,9 @@ const Voice = {
     // Characters get a voice that matches them; your chosen voice is used when it fits.
     const g = /^m/i.test(gender) ? "male" : "female";
     if (mine && this.genderOf(mine) === g) return mine;
+    // Spread characters across the best voices so everyone doesn't sound the same.
+    const good = list.filter((v) => this.genderOf(v) === g && this.rank(v) >= 45);
+    if (good.length > 1 && this._seed) return good[Math.abs(hash(String(this._seed))) % Math.min(good.length, 4)];
     const match = list.find((v) => this.genderOf(v) === g);
     if (match) return match;
     // No voice of that gender on this device: use one we can't classify and shift its pitch (see speak).
@@ -293,8 +296,17 @@ const Voice = {
   // Which voice engine to use: free on-device Kokoro (default), ElevenLabs, or the device's built-in voice.
   engine() {
     const s = getSettings();
-    if (s.tts) return s.tts;
+    if (s.tts && s.tts !== "auto") return s.tts;
+    // Auto: a neural voice built into the browser (Edge "Natural", Apple "Premium") sounds the most human
+    // and starts instantly; otherwise the free on-device Kokoro voice.
+    if (this._natural) return "device";
     return LocalAI.supported() ? "local" : Eleven.enabled() ? "eleven" : "device";
+  },
+  // Checks once whether this browser has truly natural voices.
+  async detectNatural() {
+    const list = await this.list();
+    this._natural = list.filter((v) => this.rank(v) >= 55).length >= 2;
+    return this._natural;
   },
   async speak(text, { onStart, gender, seed, persona, onWord } = {}) {
     gender = persona?.gender || gender;
@@ -337,6 +349,7 @@ const Voice = {
     this._talking = true;
     if (!this.supported) return;
     this._noMatch = null;
+    this._seed = seed || persona?.id || "";
     const voice = await this.pick(gender);
     // If the device has no matching voice, nudge pitch toward the character's gender.
     const pitchShift = this._noMatch && voice ? (this._noMatch === "female" ? (this.genderOf(voice) === "male" ? 1.35 : 1.15) : this.genderOf(voice) === "female" ? 0.7 : 0.88) : 1;
@@ -387,10 +400,18 @@ const Voice = {
   // Kokoro: generate sentence by sentence; the next one is made while the current one plays.
   async playLocal(text, { persona, gender, onStart, isCurrent, onWord }) {
     const voice = LocalAI.voiceFor(persona, gender);
-    const parts = String(text)
+    // Pairs of sentences (up to ~220 characters) sound far more natural than one sentence at a time;
+    // the first chunk stays short so speech starts quickly.
+    const sents = String(text)
       .replace(/\s+/g, " ")
       .split(/(?<=[.!?])\s+(?=[A-Z0-9"'])/)
       .filter((x) => x.trim());
+    const parts = [];
+    for (const s of sents) {
+      const last = parts[parts.length - 1];
+      if (parts.length > 0 && last.length + s.length < 220) parts[parts.length - 1] = last + " " + s;
+      else parts.push(s);
+    }
     if (!Eleven.audio) Eleven.unlock();
     const a = Eleven.audio;
     let next = LocalAI.clip(parts[0], voice);
@@ -436,6 +457,9 @@ const Voice = {
   },
 };
 
+// Find out early whether this browser has truly natural voices (used by Auto).
+if (Voice.supported) Voice.detectNatural().catch(() => {});
+
 // Speech-to-text for one turn. Sends after `silenceMs` of quiet (or only when you tap, with autoSend: false).
 // Keeps listening through normal pauses on every device. If the browser ends the session early
 // (iPhone does this), it restarts silently when allowed; otherwise it keeps your words and asks for a tap.
@@ -456,7 +480,7 @@ function mergeTranscripts(parts) {
 // How long to wait after you stop talking before sending (Settings / practice setup).
 function sendDelayMs() {
   const v = getSettings().sendAfter;
-  return v === "tap" ? Infinity : (+v || 3) * 1000;
+  return v === "tap" ? Infinity : (+v || 2) * 1000;
 }
 class Listener {
   constructor({ onText, onTurn, onState, silenceMs = 3000, initial = "", minWords = 1 }) {
@@ -669,11 +693,14 @@ class CloudListener {
       return this.onState?.(e.name === "NotAllowedError" ? (IS_IOS ? "needs-tap" : "error") : "error", e.name === "NotAllowedError" ? "not-allowed" : "audio-capture");
     }
     if (!this.active) return this.release();
-    const types = ["audio/webm;codecs=opus", "audio/webm", "audio/mp4", "audio/ogg"];
-    const mimeType = types.find((t) => MediaRecorder.isTypeSupported?.(t)) || "";
-    this.rec = new MediaRecorder(this.stream, mimeType ? { mimeType } : undefined);
-    this.rec.ondataavailable = (e) => e.data?.size && this.chunks.push(e.data);
-    this.rec.start(250);
+    this.live = this.engine === "local";
+    if (!this.live) {
+      const types = ["audio/webm;codecs=opus", "audio/webm", "audio/mp4", "audio/ogg"];
+      const mimeType = types.find((t) => MediaRecorder.isTypeSupported?.(t)) || "";
+      this.rec = new MediaRecorder(this.stream, mimeType ? { mimeType } : undefined);
+      this.rec.ondataavailable = (e) => e.data?.size && this.chunks.push(e.data);
+      this.rec.start(250);
+    }
     // Voice activity from the audio level: learns the room's noise floor, then waits for you to stop.
     try {
       Scribe.ctx ||= new (window.AudioContext || window.webkitAudioContext)();
@@ -691,6 +718,36 @@ class CloudListener {
     const an = this.ctx.createAnalyser();
     an.fftSize = 1024;
     src.connect(an);
+    // On-device Whisper: keep the raw audio and transcribe each phrase as soon as you pause, so when you
+    // finish only the last few seconds are left to process.
+    if (this.live) {
+      this.pcm = [];
+      this.pcmLen = 0;
+      this.cutAt = 0;
+      this.segs = [];
+      this.queue = Promise.resolve();
+      this.loudSinceCut = 0;
+      const sp = this.ctx.createScriptProcessor(4096, 1, 1);
+      const mute = this.ctx.createGain();
+      mute.gain.value = 0;
+      sp.onaudioprocess = (e) => {
+        if (!this.active) return;
+        const d = new Float32Array(e.inputBuffer.getChannelData(0));
+        this.pcm.push(d);
+        this.pcmLen += d.length;
+        // Before you start talking, keep only the last half second.
+        if (!this.spoke) {
+          while (this.pcm.length > 2 && this.pcmLen - this.pcm[0].length > this.ctx.sampleRate * 0.5) this.pcmLen -= this.pcm.shift().length;
+          this.base = this.pcmLen;
+        }
+      };
+      src.connect(sp);
+      sp.connect(mute);
+      mute.connect(this.ctx.destination);
+      this.sp = sp;
+      this.mute = mute;
+      this.base = 0;
+    }
     const buf = new Float32Array(an.fftSize);
     const floor = [];
     let loud = 0;
@@ -727,6 +784,8 @@ class CloudListener {
       if (rms > thr) {
         loud++;
         quietMs = 0;
+        this.cutPending = true;
+        if (this.live) this.loudSinceCut++;
         if (loud >= 3) {
           if (!this.spoke) this.onText?.(this.heardText ? this.heardText + " …" : "…");
           if (this.spoke && quietMs === 0 && this._gap >= 300) {
@@ -768,12 +827,55 @@ class CloudListener {
           if (floor.length > 80) floor.shift();
         }
       }
+      // A natural pause mid-answer: transcribe that phrase now, in the background.
+      if (this.live && this.spoke && this.cutPending && quietMs > 550 && this.loudSinceCut > 6) {
+        this.cutPending = false;
+        this.cut();
+      }
       if (this.spoke && this.speechMs > 350 && isFinite(this.silenceMs) && quietMs > this.silenceMs) this.flush();
       if (now - t0 > 180000) this.flush(); // 3-minute cap per answer
     }, 50);
   }
+  // Take the audio since the last cut, resample to 16 kHz and queue it for Whisper.
+  cut(final = false) {
+    if (!this.pcm) return;
+    const sr = this.ctx?.sampleRate || Scribe.ctx?.sampleRate || 48000;
+    const all = new Float32Array(this.pcmLen);
+    let o = 0;
+    for (const c of this.pcm) all.set(c, (o += c.length) - c.length);
+    const from = Math.max(0, (this.cutAt || 0) - Math.round(sr * 0.15));
+    const seg = all.subarray(from, all.length);
+    // Too short or too quiet to be a phrase yet: leave it for the next cut (never throw audio away).
+    if (!final && (seg.length < sr * 0.8 || this.loudSinceCut < 4)) return;
+    if (final && seg.length < sr * 0.3) return;
+    this.cutAt = all.length;
+    this.loudSinceCut = 0;
+    const ratio = sr / 16000;
+    const out = new Float32Array(Math.floor(seg.length / ratio));
+    for (let i = 0; i < out.length; i++) {
+      const a = i * ratio;
+      const k = Math.floor(a);
+      out[i] = seg[k] + (seg[Math.min(seg.length - 1, k + 1)] - seg[k]) * (a - k);
+    }
+    const idx = this.segs.length;
+    this.segs.push("");
+    this.queue = this.queue.then(async () => {
+      try {
+        this.segs[idx] = await LocalAI.transcribePCM(out);
+      } catch (e) {
+        this.segErr = e;
+      }
+      const t = [this.heardText, ...this.segs].filter(Boolean).join(" ");
+      if (t && this.active) this.onText?.(t + " …");
+    });
+  }
   release() {
     clearInterval(this.timer);
+    try {
+      this.sp?.disconnect();
+      this.mute?.disconnect();
+      if (this.sp) this.sp.onaudioprocess = null;
+    } catch {}
     try {
       this.rec?.state !== "inactive" && this.rec?.stop();
     } catch {}
@@ -790,16 +892,26 @@ class CloudListener {
     clearInterval(this.timer);
     const spoke = this.spoke;
     const done = new Promise((r) => (this.rec ? (this.rec.onstop = r) : r()));
+    const keepCtx = this.ctx;
     this.release();
+    this.ctx = keepCtx;
     await done;
     if (!spoke && !this.heardText) return this.onState?.("needs-tap");
     this.onState?.("transcribing");
-    const blob = new Blob(this.chunks, { type: this.rec?.mimeType || "audio/webm" });
     let text = "";
-    try {
-      text = spoke ? await (this.engine === "local" ? LocalAI.transcribe(blob) : Scribe.transcribe(blob)) : "";
-    } catch (e) {
-      return this.onState?.("stt-failed", e.message, this.heardText);
+    if (this.live) {
+      // Most of the answer is already transcribed — only the last phrase is left.
+      if (spoke) this.cut(true);
+      await this.queue;
+      text = this.segs.filter(Boolean).join(" ").trim();
+      if (!text && this.segErr) return this.onState?.("stt-failed", this.segErr.message, this.heardText);
+    } else {
+      const blob = new Blob(this.chunks, { type: this.rec?.mimeType || "audio/webm" });
+      try {
+        text = spoke ? await Scribe.transcribe(blob) : "";
+      } catch (e) {
+        return this.onState?.("stt-failed", e.message, this.heardText);
+      }
     }
     const full = [this.heardText, text].filter(Boolean).join(" ").trim();
     this.onState?.("idle");

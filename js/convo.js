@@ -237,12 +237,12 @@ function micCheckHTML() {
     <div class="meter"><i id="mc-level"></i></div>
     <p class="small muted" id="mc-note">${IS_IOS ? "iPhone: uses the built-in mic (or AirPods). Allow microphone access when asked." : "Blue Snowball: set it as your default input (Windows: Settings → System → Sound → Input; Mac: System Settings → Sound → Input) and pick it here. Speech recognition uses your browser's selected mic."}</p>
     <div class="row"><button class="btn small" id="mc-stt">${icon("message")} Test speech-to-text</button><span class="small muted grow" id="mc-stt-out">Say a sentence — your words should appear here.</span></div>
-    <label class="field"><span>Voice engine</span><div class="segmented wrap" id="mc-tts-eng">${[["local", "Free on-device (Kokoro)"], ...(Eleven.enabled() ? [["eleven", "ElevenLabs"]] : []), ["device", "Device voice"]].map(([v, l]) => `<button data-tts="${v}" class="${Voice.engine() === v ? "on" : ""}">${l}</button>`).join("")}</div></label>
+    <label class="field"><span>Voice engine</span><div class="segmented wrap" id="mc-tts-eng">${[["auto", "Auto (most natural)"], ["local", "On-device (Kokoro)"], ...(Eleven.enabled() ? [["eleven", "ElevenLabs"]] : []), ["device", "Browser voice"]].map(([v, l]) => `<button data-tts="${v}" class="${(getSettings().tts || "auto") === v ? "on" : ""}">${l}</button>`).join("")}</div></label>
     <label class="field"><span>Speech-to-text</span><div class="segmented wrap" id="mc-stt-eng">${[["local", "Free on-device (Whisper)"], ...(Eleven.enabled() ? [["scribe", "ElevenLabs Scribe"]] : []), ["browser", "Browser"]].map(([v, l]) => `<button data-stt="${v}" class="${sttEngine() === v ? "on" : ""}">${l}</button>`).join("")}</div></label>
     <div class="local-status small" id="mc-local"></div>
     <label class="field"><span>Device / ElevenLabs voice</span><div class="row"><select id="mc-voice" style="flex:1"><option>Loading voices…</option></select><button class="btn small" id="mc-say">${icon("volume")} Sound check</button></div></label>
     <div class="sound-check" id="mc-sound" hidden></div>
-    <label class="field"><span>Send my answer</span><div class="segmented" id="mc-send">${[["2", "After 2s pause"], ["3", "After 3s"], ["5", "After 5s"], ["tap", "When I tap"]].map(([v, l]) => `<button data-send="${v}" class="${String(getSettings().sendAfter || "3") === v ? "on" : ""}">${l}</button>`).join("")}</div></label>
+    <label class="field"><span>Send my answer</span><div class="segmented" id="mc-send">${[["1.5", "After 1.5s pause"], ["2", "2s"], ["3", "3s"], ["5", "5s"], ["tap", "When I tap"]].map(([v, l]) => `<button data-send="${v}" class="${String(getSettings().sendAfter || "2") === v ? "on" : ""}">${l}</button>`).join("")}</div></label>
     <label class="field"><span>Speaking speed</span><div class="segmented" id="mc-rate">${[0.9, 1, 1.1, 1.2].map((r) => `<button data-rate="${r}" class="${(getSettings().voiceRate || 1) === r ? "on" : ""}">${r === 1 ? "Normal" : r + "×"}</button>`).join("")}</div></label>
     <p class="small muted">The free on-device engines (Kokoro voices and Whisper speech recognition) have no limits or accounts. They download once (about 90 MB each) and then work offline; each character gets a matching voice.</p>`;
 }
@@ -913,7 +913,7 @@ function listen() {
     onState(s, err, kept) {
       if (P.listener !== me) return; // an old listener — ignore it
       if (s === "listening") {
-        const d = getSettings().sendAfter || "3";
+        const d = getSettings().sendAfter || "2";
         setStatus(d === "tap" ? "Listening… tap the mic (or Send now) when you're done." : `Listening… take your time — it sends after a ${d}-second pause.`, "live");
         setOrb("live");
         P.netRetries = 0;
@@ -1008,6 +1008,8 @@ async function onMyTurn(text, duration, audio = null) {
   }
   P.thinking = false;
   if (r.end) P.ending = true;
+  // Built-in partner: a light human touch so canned lines don't sound read off a card.
+  if (P.sc.offline && !/^\[/.test(r.reply) && Math.random() < 0.3) r.reply = ["Um, ", "Yeah, ", "So, ", "Hmm. ", "Honestly? "][Math.floor(Math.random() * 5)] + r.reply.replace(/^./, (x) => (/^I\b/.test(r.reply) ? x : x.toLowerCase()));
   say(r.reply);
 }
 
