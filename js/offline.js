@@ -86,6 +86,40 @@ const OFFLINE = (() => {
   };
   const NETWORK = ["Nice to meet you, Mason. So what got you interested in finance?", "That's impressive for a sophomore. What are you hoping to do this summer?", "Honestly, the best thing I did early on was talk to a lot of people.", "My team does a mix of analysis and client work. It's busy but fun.", "Sure, what would you like to know?"];
 
+  // When you ask the other person something, they answer it — by topic — instead of reading the next line.
+  const ANSWERS = {
+    interview: [
+      [/\b(first (month|90 days|few weeks)|great intern|succeed|success look)/i, "Honestly? Ask a lot of questions, take good notes, and own one small project end to end. The interns who stand out finish what they start."],
+      [/\b(culture|team like|work environment|people)\b/i, "It's a small, friendly team. People are busy, but everyone makes time to help — we eat lunch together most days."],
+      [/\b(day.to.day|typical day|what would i (do|be doing))\b/i, "A mix: some research, helping prep client materials, and sitting in on a meeting or two each week so you see how it works."],
+      [/\b(next steps?|timeline|hear back|when will)\b/i, "We'll wrap up interviews this week and reach out within about ten days either way."],
+      [/\b(you (like|enjoy)|favorite part|why do you)\b/i, "The people. And honestly, seeing someone's situation get better because of work we did — that never gets old."],
+    ],
+    networking: [
+      [/\b(enjoy|like (most|about)|favorite part|love about)\b/i, "Honestly, the problem-solving. Every client's situation is a puzzle, and it feels great when the plan clicks."],
+      [/\b(get started|got started|how did you (start|get into|end up)|break in)\b/i, "I started as an intern at a small firm, mostly making copies and spreadsheets. I asked a ton of questions and it turned into a job offer."],
+      [/\b(advice|wish you knew|recommend|should i)\b/i, "Learn Excel really well, read the news every day, and talk to as many people as you can — like you're doing right now."],
+      [/\b(day.to.day|typical day|what do you (do|actually do))\b/i, "Mornings are research and markets, afternoons are client calls and meetings. Some days are all spreadsheets, some are all people."],
+      [/\b(skills?|classes|courses|learn|study)\b/i, "Statistics, writing, and being able to explain numbers simply. The math matters, but explaining it matters more."],
+      [/\b(hard(est)?|challeng|tough)\b/i, "Telling clients things they don't want to hear — like that a goal isn't realistic yet. You learn to be kind and honest at the same time."],
+      [/\b(internship|summer|hiring|openings?)\b/i, "We usually take one or two high school interns in the summer. Applications open in March — I can point you to the right person."],
+    ],
+    sales: [
+      [/\b(how (much|many) (time|hours)|time does|hours a week)\b/i, "Probably six or seven hours a week between me and my office manager. It's a lot."],
+      [/\b(currently use|using now|what do you use|tools?|software)\b/i, "Right now it's spreadsheets and a lot of copy-pasting. We tried a tool once but nobody used it."],
+      [/\b(budget|spend|afford|cost you|price range)\b/i, "Budget's tight this quarter. If it's under fifty a month and actually saves time, I'd consider it."],
+      [/\b(who (else|decides)|decision|sign off|approve)\b/i, "It's me and my business partner. She'd have to see it too."],
+      [/\b(biggest|main|worst|headache|problem|pain|frustrat)\b/i, "Our biggest problem is wasted time — everything is manual, and things fall through the cracks."],
+      [/\b(customers?|lose|lost)\b/i, "We've definitely lost a couple of customers because an invoice or follow-up slipped."],
+    ],
+  };
+  const answerFor = (kind, text, sc) => {
+    const hit = (ANSWERS[kind] || []).find(([re], i) => re.test(text) && !(sc.answered ||= []).includes(kind + i));
+    if (!hit) return null;
+    sc.answered.push(kind + ANSWERS[kind].indexOf(hit));
+    return hit[1];
+  };
+
   function setup(kind, opts, difficulty) {
     const g = opts.character?.gender || (Math.random() < 0.5 ? "female" : "male");
     const name = opts.character ? `${opts.character.name} ${pick(["Reyes", "Bennett", "Cho", "Patel", "Morgan", "Hayes", "Silva", "Brooks"])}` : pick(NAMES[g]);
@@ -123,6 +157,13 @@ const OFFLINE = (() => {
     }
     if (kind === "interview") {
       const qs = sc.questions;
+      // You asked the interviewer something: answer it, then move on (or wrap up at the end).
+      if (/\?\s*$/.test(last.trim()) && mine.length >= 1) {
+        const a = answerFor("interview", last, sc) || "Good question. Honestly, it depends a lot on the person — but curiosity and follow-through go a long way here.";
+        if (sc.step >= qs.length - 1) return { reply: `${a} Thanks so much for your time today, Mason — we'll be in touch.`, end: true };
+        sc.step++;
+        return { reply: `${a} Okay — ${qs[sc.step].replace(/^./, (x) => x.toLowerCase())}`, end: false };
+      }
       // One follow-up per question when the answer is thin.
       if (n < 25 && !sc.followed[sc.step] && sc.step < qs.length - 1) {
         sc.followed[sc.step] = true;
@@ -220,17 +261,31 @@ const OFFLINE = (() => {
       const asked = /\?/.test(last) || /\b(what|how|why|tell me|do you|are you)\b/i.test(last);
       if (/\b(next step|sign|trial|demo|would you be open|can we|shall we|ready to|get started|buy)\b/i.test(last) && mine.length >= 3)
         return { reply: sc.revealed.length >= ((o.interest || 3) >= 4 ? 1 : 2) ? "Okay, you've made a good case. Let's set up a trial next week." : "I'm not convinced yet — you never really asked what we need. I'll pass for now.", end: true };
+      const ans = asked ? answerFor("sales", last, sc) : null;
+      if (ans) {
+        sc.revealed.push(ans);
+        return { reply: ans, end: false };
+      }
       if (asked && sc.revealed.length < BUYER.needs.length) {
         const r = BUYER.needs[sc.revealed.length];
         sc.revealed.push(r);
         return { reply: r, end: false };
       }
       if (mine.length >= 10) return { reply: "I appreciate the pitch. I'll think about it.", end: true };
-      return { reply: BUYER.objections[(sc.step++) % BUYER.objections.length], end: false };
+      // Skip objections you've already answered (like price, once you've said it).
+      const said = mine.map((x) => x.text).join(" ");
+      const open = BUYER.objections.filter((x) => !(/cost/i.test(x) && /\$\d|per month|a month|price/i.test(said)) && !(sc.objUsed ||= []).includes(x));
+      const obj = open[0] || BUYER.objections[(sc.step++) % BUYER.objections.length];
+      sc.objUsed.push(obj);
+      return { reply: obj, end: false };
     }
     // networking
     if (/\b(could i|would you be open|can i|email you|connect on|coffee|15 minutes|follow up)\b/i.test(last) && mine.length >= 2) return { reply: "Of course — send me an email and we'll find a time. Great meeting you, Mason.", end: true };
     if (mine.length >= 8) return { reply: "I've got to run, but it was great talking with you.", end: true };
+    if (/\?/.test(last)) {
+      const a = answerFor("networking", last, sc);
+      if (a) return { reply: a, end: false };
+    }
     return { reply: NETWORK[Math.min(sc.step++, NETWORK.length - 1)], end: false };
   }
 
