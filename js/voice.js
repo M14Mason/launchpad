@@ -290,13 +290,31 @@ const Voice = {
   },
   // ElevenLabs when a key is set, otherwise the best device voice. Resolves when finished or cancelled.
   // persona: { gender, eleven, pitch, rate } (a practice character). onWord(strength) fires as words are spoken.
+  // Which voice engine to use: free on-device Kokoro (default), ElevenLabs, or the device's built-in voice.
+  engine() {
+    const s = getSettings();
+    if (s.tts) return s.tts;
+    return LocalAI.supported() ? "local" : Eleven.enabled() ? "eleven" : "device";
+  },
   async speak(text, { onStart, gender, seed, persona, onWord } = {}) {
     gender = persona?.gender || gender;
     if (!text) return;
+    text = speakable(text); // numbers as words: no stumbling on "$1,850"
     this.stop();
     const tok = ++this._token;
     const isCurrent = () => tok === this._token;
-    if (Eleven.enabled()) {
+    const engine = this.engine();
+    if (engine === "local" && !LocalAI.slow) {
+      if (LocalAI.status.voice === "ready") {
+        try {
+          return await this.playLocal(text, { persona, gender, onStart, isCurrent, onWord });
+        } catch (e) {
+          if (!isCurrent()) return;
+          this.lastError = "On-device voice: " + e.message;
+        }
+      } else LocalAI.tts().catch(() => {}); // first time: download in the background, use the device voice meanwhile
+    }
+    if (engine === "eleven" && Eleven.enabled()) {
       try {
         return await Eleven.play(String(text), { gender, seed, onStart, isCurrent, voiceId: persona?.eleven, onWord });
       } catch (e) {
@@ -365,6 +383,56 @@ const Voice = {
   cancel() {
     this._token++;
     this.stop();
+  },
+  // Kokoro: generate sentence by sentence; the next one is made while the current one plays.
+  async playLocal(text, { persona, gender, onStart, isCurrent, onWord }) {
+    const voice = LocalAI.voiceFor(persona, gender);
+    const parts = String(text)
+      .replace(/\s+/g, " ")
+      .split(/(?<=[.!?])\s+(?=[A-Z0-9"'])/)
+      .filter((x) => x.trim());
+    if (!Eleven.audio) Eleven.unlock();
+    const a = Eleven.audio;
+    let next = LocalAI.clip(parts[0], voice);
+    let started = false;
+    for (let i = 0; i < parts.length; i++) {
+      const clip = await next;
+      if (!isCurrent()) return;
+      if (i === 0 && LocalAI.rtf > 3) {
+        // This device is too slow for real-time on-device speech: switch to the device voice from now on.
+        LocalAI.slow = true;
+        toast("The free on-device voice is slow on this device — switching to the built-in voice. (Change it in Settings.)");
+      }
+      next = i + 1 < parts.length ? LocalAI.clip(parts[i + 1], voice) : null;
+      if (!started) {
+        started = true;
+        onStart?.();
+      }
+      await new Promise((res) => {
+        let done = false;
+        const finish = () => {
+          if (done) return;
+          done = true;
+          clearInterval(poll);
+          clearInterval(beat);
+          a.onended = a.onerror = null;
+          res();
+        };
+        const t0 = Date.now();
+        const poll = setInterval(() => {
+          if (!isCurrent()) {
+            a.pause();
+            finish();
+          } else if (Date.now() - t0 > clip.secs * 1000 + 3000) finish();
+        }, 100);
+        const beat = onWord && setInterval(() => !a.paused && onWord(0.6 + Math.random() * 0.4), 230);
+        a.onended = finish;
+        a.onerror = finish;
+        a.src = clip.url;
+        a.play()?.catch?.(finish);
+      });
+      setTimeout(() => URL.revokeObjectURL(clip.url), 2000);
+    }
   },
 };
 
@@ -511,13 +579,22 @@ class Listener {
   }
 }
 
+const canRecord = () => !!navigator.mediaDevices?.getUserMedia && typeof MediaRecorder !== "undefined";
+// Which speech-to-text to use: free on-device Whisper (default), ElevenLabs Scribe, or the browser's.
+function sttEngine() {
+  const s = getSettings().stt;
+  if (s === "scribe" && Scribe.enabled()) return "scribe";
+  if (s === "browser") return "browser";
+  return LocalAI.supported() && canRecord() ? "local" : SR ? "browser" : "none";
+}
+
 // ---------- ElevenLabs Scribe: accurate speech-to-text ----------
 // Records your answer, finds where you stop talking from the audio level (no browser speech engine),
 // then sends the clip to ElevenLabs for a transcript. Same interface as Listener.
 const Scribe = {
   models: ["scribe_v1", "scribe_v2"],
   enabled() {
-    return Eleven.enabled() && getSettings().stt !== "browser" && !this.broken && !!navigator.mediaDevices?.getUserMedia && typeof MediaRecorder !== "undefined";
+    return Eleven.enabled() && getSettings().stt === "scribe" && !this.broken && canRecord();
   },
   keyterms() {
     const base = ["Roth IRA", "401(k)", "index fund", "emergency fund", "compound interest", "asset allocation", "Alpaca", "RSI", "EMA", "ATR", "backtest", "Flask", "Python", "Canyon Crest", "Keen", "Titan", "ETF", "S&P 500", "APR", "budget"];
@@ -566,8 +643,8 @@ const Scribe = {
 };
 
 class CloudListener {
-  constructor({ onText, onTurn, onState, silenceMs = 3000, initial = "" }) {
-    Object.assign(this, { onText, onTurn, onState, silenceMs, initial });
+  constructor({ onText, onTurn, onState, silenceMs = 3000, initial = "", engine = "scribe" }) {
+    Object.assign(this, { onText, onTurn, onState, silenceMs, initial, engine });
     this.active = false;
     this.heardText = initial || "";
   }
@@ -619,7 +696,18 @@ class CloudListener {
     let loud = 0;
     let quietMs = 0;
     // Delivery measurements for the analysis: speaking span, pauses, volume and pitch.
-    const m = (this.metrics = { first: 0, last: 0, pauses: 0, longestPause: 0, rms: [], pitches: [] });
+    const m = (this.metrics = { first: 0, last: 0, pauses: 0, longestPause: 0, rms: [], pitches: [], fillers: 0 });
+    const fbuf = new Float32Array(an.frequencyBinCount);
+    let prevSpec = null;
+    let prevSemi = null;
+    let stable = 0;
+    let runGap = 0;
+    const fluxes = [];
+    // A run of steady, flat-pitched voice (300 ms–1.5 s) right after or before a pause = a filled pause ("um", "uh").
+    const endRun = (beforeQuiet) => {
+      if (stable >= 6 && stable <= 30 && (beforeQuiet || runGap >= 200)) m.fillers++;
+      stable = 0;
+    };
     const t0 = performance.now();
     let last = t0;
     this.onState?.("listening");
@@ -645,18 +733,33 @@ class CloudListener {
             m.pauses++;
             m.longestPause = Math.max(m.longestPause, this._gap / 1000);
           }
+          this._lastGap = this._gap || 0;
           this._gap = 0;
           this.spoke = true;
           this.speechMs += dt;
           m.first ||= now;
           m.last = now;
           m.rms.push(rms);
-          if (m.rms.length % 2 === 0) {
-            const f = Mic.pitch(buf, this.ctx.sampleRate, rms);
-            if (f > 70 && f < 400) m.pitches.push(f);
-          }
+          const f = Mic.pitch(buf, this.ctx.sampleRate, rms);
+          if (f > 70 && f < 400) m.pitches.push(f);
+          // Spectral change between frames: real words change shape quickly, "uhhh" barely changes.
+          an.getFloatFrequencyData(fbuf);
+          let flux = 0;
+          if (prevSpec) for (let k = 2; k < 120; k++) flux += Math.abs(fbuf[k] - prevSpec[k]);
+          prevSpec = Float32Array.from(fbuf);
+          flux /= 118;
+          fluxes.push(flux);
+          const fThr = fluxes.length > 20 ? [...fluxes].sort((a, b) => a - b)[Math.floor(fluxes.length * 0.5)] * 0.55 : 2.5;
+          const semi = f > 70 && f < 400 ? 12 * Math.log2(f / 100) : null;
+          if (semi != null && prevSemi != null && Math.abs(semi - prevSemi) < 0.6 && flux < fThr) {
+            if (!stable) runGap = this._lastGap || 0;
+            stable++;
+          } else endRun(false);
+          prevSemi = semi;
         }
       } else {
+        if (loud >= 3 || stable) endRun(true);
+        prevSemi = null;
         loud = 0;
         quietMs += dt;
         if (this.spoke) this._gap = quietMs;
@@ -694,7 +797,7 @@ class CloudListener {
     const blob = new Blob(this.chunks, { type: this.rec?.mimeType || "audio/webm" });
     let text = "";
     try {
-      text = spoke ? await Scribe.transcribe(blob) : "";
+      text = spoke ? await (this.engine === "local" ? LocalAI.transcribe(blob) : Scribe.transcribe(blob)) : "";
     } catch (e) {
       return this.onState?.("stt-failed", e.message, this.heardText);
     }
@@ -706,7 +809,7 @@ class CloudListener {
     const mean = (a) => a.reduce((x, y) => x + y, 0) / (a.length || 1);
     const sd = (a) => Math.sqrt(mean(a.map((x) => (x - mean(a)) ** 2)));
     const semis = (m.pitches || []).map((f) => 12 * Math.log2(f / 100));
-    const audio = m.rms?.length > 10 ? { voicedSec: Math.round(this.speechMs / 100) / 10, pauses: m.pauses, longestPause: Math.round(m.longestPause * 10) / 10, volumeCv: Math.round((sd(m.rms) / (mean(m.rms) || 1)) * 100) / 100, pitchHz: Math.round(mean(m.pitches)) || 0, pitchVarSemis: semis.length > 5 ? Math.round(sd(semis) * 10) / 10 : null } : null;
+    const audio = m.rms?.length > 10 ? { fillers: m.fillers || 0, voicedSec: Math.round(this.speechMs / 100) / 10, pauses: m.pauses, longestPause: Math.round(m.longestPause * 10) / 10, volumeCv: Math.round((sd(m.rms) / (mean(m.rms) || 1)) * 100) / 100, pitchHz: Math.round(mean(m.pitches)) || 0, pitchVarSemis: semis.length > 5 ? Math.round(sd(semis) * 10) / 10 : null } : null;
     if (full) this.onTurn?.(full, Math.round(span * 10) / 10, audio);
     else this.onState?.("needs-tap", "nothing heard");
   }
@@ -832,6 +935,8 @@ function textMetrics(turns) {
   const all = mine.map((t) => t.text).join(" ");
   const theirs = turns.filter((t) => t.from === "them").reduce((n, t) => n + t.text.split(/\s+/).length, 0);
   const fillers = (all.match(FILLERS) || []).map((x) => x.toLowerCase());
+  const heardUms = mine.reduce((n, t) => n + (t.audio?.fillers || 0), 0);
+  for (let i = 0; i < heardUms; i++) fillers.push("um/uh (heard)");
   const topFillers = Object.entries(fillers.reduce((m, f) => ((m[f] = (m[f] || 0) + 1), m), {}))
     .sort((a, b) => b[1] - a[1])
     .slice(0, 4);

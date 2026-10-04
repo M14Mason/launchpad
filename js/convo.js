@@ -237,16 +237,14 @@ function micCheckHTML() {
     <div class="meter"><i id="mc-level"></i></div>
     <p class="small muted" id="mc-note">${IS_IOS ? "iPhone: uses the built-in mic (or AirPods). Allow microphone access when asked." : "Blue Snowball: set it as your default input (Windows: Settings → System → Sound → Input; Mac: System Settings → Sound → Input) and pick it here. Speech recognition uses your browser's selected mic."}</p>
     <div class="row"><button class="btn small" id="mc-stt">${icon("message")} Test speech-to-text</button><span class="small muted grow" id="mc-stt-out">Say a sentence — your words should appear here.</span></div>
-    <label class="field"><span>Voice ${Eleven.enabled() ? `<span class="pill">ElevenLabs</span>` : ""}</span><div class="row"><select id="mc-voice" style="flex:1"><option>Loading voices…</option></select><button class="btn small" id="mc-say">${icon("volume")} Sound check</button></div></label>
+    <label class="field"><span>Voice engine</span><div class="segmented wrap" id="mc-tts-eng">${[["local", "Free on-device (Kokoro)"], ...(Eleven.enabled() ? [["eleven", "ElevenLabs"]] : []), ["device", "Device voice"]].map(([v, l]) => `<button data-tts="${v}" class="${Voice.engine() === v ? "on" : ""}">${l}</button>`).join("")}</div></label>
+    <label class="field"><span>Speech-to-text</span><div class="segmented wrap" id="mc-stt-eng">${[["local", "Free on-device (Whisper)"], ...(Eleven.enabled() ? [["scribe", "ElevenLabs Scribe"]] : []), ["browser", "Browser"]].map(([v, l]) => `<button data-stt="${v}" class="${sttEngine() === v ? "on" : ""}">${l}</button>`).join("")}</div></label>
+    <div class="local-status small" id="mc-local"></div>
+    <label class="field"><span>Device / ElevenLabs voice</span><div class="row"><select id="mc-voice" style="flex:1"><option>Loading voices…</option></select><button class="btn small" id="mc-say">${icon("volume")} Sound check</button></div></label>
     <div class="sound-check" id="mc-sound" hidden></div>
-    ${Eleven.enabled() ? `<label class="field"><span>Speech-to-text</span><div class="segmented" id="mc-stt-eng">${[["scribe", "ElevenLabs Scribe (most accurate)"], ["browser", "Browser (free)"]].map(([v, l]) => `<button data-stt="${v}" class="${(getSettings().stt || "scribe") === v ? "on" : ""}">${l}</button>`).join("")}</div></label>` : ""}
     <label class="field"><span>Send my answer</span><div class="segmented" id="mc-send">${[["2", "After 2s pause"], ["3", "After 3s"], ["5", "After 5s"], ["tap", "When I tap"]].map(([v, l]) => `<button data-send="${v}" class="${String(getSettings().sendAfter || "3") === v ? "on" : ""}">${l}</button>`).join("")}</div></label>
     <label class="field"><span>Speaking speed</span><div class="segmented" id="mc-rate">${[0.9, 1, 1.1, 1.2].map((r) => `<button data-rate="${r}" class="${(getSettings().voiceRate || 1) === r ? "on" : ""}">${r === 1 ? "Normal" : r + "×"}</button>`).join("")}</div></label>
-    <p class="small muted">${
-      Eleven.enabled()
-        ? "Using ElevenLabs human voices. “Auto” gives each character a voice that fits them."
-        : `For a truly human voice, add a free ElevenLabs key in <a href="#settings">Settings</a>. ${IS_IOS ? "Or download a “Premium” voice: iPhone Settings → Accessibility → Spoken Content → Voices → English." : "Otherwise Edge “Natural” and Chrome “Google” voices sound best."}`
-    }</p>`;
+    <p class="small muted">The free on-device engines (Kokoro voices and Whisper speech recognition) have no limits or accounts. They download once (about 90 MB each) and then work offline; each character gets a matching voice.</p>`;
 }
 function wireMicCheck() {
   const sel = document.getElementById("mc-voice");
@@ -279,9 +277,29 @@ function wireMicCheck() {
       Store.set("settings", { ...getSettings(), stt: b.dataset.stt });
       Scribe.broken = null;
       Scribe.fails = 0;
+      if (b.dataset.stt === "local") LocalAI.asr().catch(() => {});
       document.querySelectorAll("#mc-stt-eng button").forEach((x) => x.classList.toggle("on", x === b));
     })
   );
+  document.querySelectorAll("#mc-tts-eng [data-tts]").forEach((b) =>
+    b.addEventListener("click", () => {
+      Store.set("settings", { ...getSettings(), tts: b.dataset.tts });
+      LocalAI.slow = false;
+      if (b.dataset.tts === "local") LocalAI.tts().catch(() => {});
+      document.querySelectorAll("#mc-tts-eng button").forEach((x) => x.classList.toggle("on", x === b));
+    })
+  );
+  // Download status for the free on-device engines.
+  const showLocal = () => {
+    const el = document.getElementById("mc-local");
+    if (!el) return document.removeEventListener("localai", showLocal);
+    const st = LocalAI.status;
+    const line = (name, k) => (st[k] === "ready" ? `${icon("check")} ${name} ready` : st[k] === "loading" ? `<span class="spinner"></span> ${name} downloading… ${LocalAI.progress[k]}%` : st[k] === "failed" ? `${icon("alert")} ${name} couldn't load on this device` : `${name}: not downloaded yet`);
+    el.innerHTML = `<div>${line("Voice (Kokoro)", "voice")}</div><div>${line("Speech-to-text (Whisper)", "ears")}</div>${st.voice === "idle" || st.ears === "idle" ? `<button class="btn small" id="mc-dl">${icon("download")} Download now</button>` : ""}`;
+    document.getElementById("mc-dl")?.addEventListener("click", () => LocalAI.warm());
+  };
+  document.addEventListener("localai", showLocal);
+  showLocal();
   document.querySelectorAll("#mc-send [data-send]").forEach((b) =>
     b.addEventListener("click", () => {
       Store.set("settings", { ...getSettings(), sendAfter: b.dataset.send });
@@ -303,7 +321,9 @@ function wireMicCheck() {
     e.currentTarget.innerHTML = `${icon("stop")} Stop`;
     const btn = e.currentTarget;
     const reset = () => (btn.innerHTML = `${icon("message")} Test speech-to-text`);
-    wireMicCheck.l = new (Scribe.enabled() ? CloudListener : Listener)({
+    const eng = sttEngine() === "local" && LocalAI.status.ears !== "ready" ? (LocalAI.asr().catch(() => {}), SR ? "browser" : "local") : sttEngine();
+    wireMicCheck.l = new (eng === "local" || eng === "scribe" ? CloudListener : Listener)({
+      engine: eng,
       silenceMs: 1800,
       onText: (t) => (out.textContent = t),
       onTurn: (t) => ((out.textContent = "Heard: “" + t + "” ✓"), reset()),
@@ -363,7 +383,24 @@ async function soundCheck(btn) {
   };
   btn.disabled = true;
   try {
-    if (Eleven.enabled()) {
+    if (Voice.engine() === "local") {
+      const s = step("Free on-device voice (Kokoro)");
+      try {
+        const t0 = Date.now();
+        await LocalAI.tts();
+        const clip = await LocalAI.clip("Hi Mason! This is your free on-device voice.", "af_heart");
+        if (!Eleven.audio) Eleven.unlock();
+        Eleven.audio.src = clip.url;
+        await Eleven.audio.play();
+        s.ok = true;
+        s.note = `Playing (made in ${((Date.now() - t0) / 1000).toFixed(1)}s, ${LocalAI.rtf < 1 ? "faster than real time" : "a little slow on this device"}).`;
+      } catch (e) {
+        s.ok = false;
+        s.note = "Couldn't run on this device (" + e.message + "). The device voice will be used.";
+      }
+      draw();
+    }
+    if (Voice.engine() === "eleven" && Eleven.enabled()) {
       const s = step("ElevenLabs voice");
       Eleven.broken = null;
       try {
@@ -532,6 +569,8 @@ const LiveFX = {
 async function startPractice(btn, adaptive) {
   // Unlock speech + audio on iOS/Safari inside the tap.
   Voice.unlock();
+  // Start downloading the free on-device voice + speech-to-text (used as soon as they're ready).
+  if (Voice.engine() === "local" || sttEngine() === "local") LocalAI.warm();
   const kind = practiceKind();
   const o = P.opts;
   const difficulty = o.difficulty === "adaptive" ? adaptive : o.difficulty;
@@ -751,7 +790,7 @@ function setOrb(state) {
 }
 // Your turn: PC/Mac start listening right away (hands-free); iPhone waits for one tap (Apple's rule).
 // Can this device take spoken answers? (ElevenLabs Scribe or the browser's speech engine)
-const canListen = () => Scribe.enabled() || !!SR;
+const canListen = () => Scribe.enabled() || !!SR || (LocalAI.supported() && canRecord());
 function yourTurn() {
   if (P.phase !== "live" || !location.hash.startsWith("#practice")) return;
   if (!canListen() || P.typing || P.micBlocked) {
@@ -759,7 +798,7 @@ function yourTurn() {
     return setStatus(!canListen() ? "Type your reply below." : P.micBlocked ? "Tap the mic to try again, or type below." : "Your turn — type below or tap the mic.", "warn");
   }
   // iPhone's browser speech engine needs a tap every turn; recording for Scribe usually doesn't.
-  if (IS_IOS && !Scribe.enabled()) {
+  if (IS_IOS && !["local", "scribe"].includes(sttEngine())) {
     setOrb("tap");
     return setStatus("Your turn — tap the mic and answer.", "live");
   }
@@ -847,9 +886,16 @@ function listen() {
   P.listenSince = Date.now();
   const initial = P.pending || "";
   P.pending = "";
-  const cloud = Scribe.enabled();
-  plog("mic on · " + (cloud ? "ElevenLabs Scribe" : "browser speech") + (initial ? " (continuing your answer)" : ""));
+  // Free on-device Whisper once it's downloaded (the browser's engine fills in during the first download).
+  let eng = sttEngine();
+  if (eng === "local" && LocalAI.status.ears !== "ready") {
+    LocalAI.asr().catch(() => {});
+    eng = SR ? "browser" : "local";
+  }
+  const cloud = eng === "local" || eng === "scribe";
+  plog("mic on · " + { local: "on-device Whisper", scribe: "ElevenLabs Scribe", browser: "browser speech" }[eng] + (initial ? " (continuing your answer)" : ""));
   const me = new (cloud ? CloudListener : Listener)({
+    engine: eng,
     silenceMs: sendDelayMs(),
     initial,
     onText: (t) => {

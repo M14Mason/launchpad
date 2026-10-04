@@ -255,8 +255,13 @@ const FP = (() => {
     const b = s.books[s.mode];
     const m = b.inbox.find((x) => x.id === msgId);
     if (!m) return null;
-    const res = scoreReply(m, text, b.day - m.day);
+    const lastThem = m.thread?.length ? m.thread[m.thread.length - 1] : { day: m.day };
+    const res = scoreReply(m, text, b.day - (lastThem.day ?? m.day));
+    m.thread ||= [{ who: "them", text: m.body, day: m.day }];
+    m.thread.push({ who: "me", text, day: b.day, score: res });
     m.replied = true;
+    m.needsReply = false;
+    m.waiting = !!m.clientId;
     m.reply = { text, day: b.day, ...res };
     if (m.clientId)
       Clients.update(m.clientId, (c) => {
@@ -265,7 +270,58 @@ const FP = (() => {
       });
     if (b.mode === "career") b.xp = (b.xp || 0) + Math.max(0, res.score) * 2;
     save(s);
+    if (m.clientId) clientResponds(b.mode, m.id, res);
     return res;
+  }
+  // The client writes back — in character (Claude), or with a built-in reply that reacts to how good your answer was.
+  async function clientResponds(mode, msgId, res) {
+    const s0 = state();
+    const m0 = s0.books[mode].inbox.find((x) => x.id === msgId);
+    const c = Clients.find(m0?.clientId);
+    if (!m0 || !c) return;
+    let text = "";
+    let asks = false;
+    if (AI.enabled()) {
+      try {
+        const thread = m0.thread.map((t) => `${t.who === "me" ? "Mason (your planner)" : c.first}: ${t.text}`).join("\n");
+        const out = await AI.ask(
+          `You are a PRACTICE financial-planning client writing an email reply. Stay fully in character.
+${Clients.notesFor(c)}
+The email thread so far:
+${thread}
+Write ${c.first}'s next reply email: 1-4 short sentences, natural and specific to what Mason said. If his answer helped, say so; if it dodged your question, was vague, or promised returns, push back or ask again. If he suggested a call or meeting, respond to that. Sometimes ask one natural follow-up question. No sign-off, no subject line.
+Return ONLY JSON: {"reply": "...", "asksQuestion": true/false}`,
+          { effort: "low", maxTokens: 700, timeout: 30000 }
+        );
+        const j = AI.parseJSON(out, null);
+        if (j?.reply) {
+          text = j.reply.trim();
+          asks = !!j.asksQuestion;
+        }
+      } catch {}
+    }
+    if (!text) {
+      const good = res.score >= 3;
+      const ok = res.score >= 1;
+      const pickOne = (a) => a[Math.floor(Math.random() * a.length)];
+      text = good
+        ? pickOne(["Thank you — that really helps. I feel a lot better.", "Okay, that makes sense. Thanks for getting back to me so fast.", "Perfect. Let's talk then — thank you!"])
+        : ok
+          ? pickOne(["Okay… I think I get it. So what should I actually do this week?", "Thanks. Can you explain that a little more simply?", "Got it. Is there anything I should change right now?"])
+          : pickOne(["Hmm, that doesn't really answer my question.", "I'm still pretty worried. Can we talk on the phone?", "I was hoping for a clearer answer, honestly."]);
+      asks = /\?$/.test(text);
+    }
+    const s = state();
+    const b = s.books[mode];
+    const m = b.inbox.find((x) => x.id === msgId);
+    if (!m) return;
+    m.thread.push({ who: "them", text, day: b.day });
+    m.waiting = false;
+    m.read = false;
+    m.needsReply = asks;
+    if (asks) m.replied = false;
+    save(s);
+    FPDock.render();
   }
 
   return { ROLES, TEAM, state, save, book, setBook, bookOf, dateFor, fmtDate, clientsIn, tick, push, acceptLead, afterMeeting, reply, scoreReply, HEADLINES };
@@ -444,12 +500,16 @@ const FPDock = {
         FP.setBook(b);
       }
       el.innerHTML = `<button class="ph-back" id="ph-back">‹ ${this.app === "mail" ? "Mail" : "Messages"}</button>
-        <div class="ph-thread"><div class="ph-from">${esc(m.from)}</div>${m.subject ? `<div class="ph-subj">${esc(m.subject)}</div>` : ""}<div class="ph-bubble them">${esc(m.body)}</div><div class="small muted">${FP.fmtDate(b, m.day)}</div>
-        ${m.reply ? `<div class="ph-bubble me">${esc(m.reply.text)}</div><div class="ph-score">${m.reply.notes.map((n) => `<div class="small ${n[0] === "✓" ? "good-text" : "warn-text"}">${esc(n)}</div>`).join("")}<div class="small"><strong>Relationship ${m.reply.delta >= 0 ? "+" : ""}${m.reply.delta}</strong></div></div>` : ""}
+        <div class="ph-thread"><div class="ph-from">${esc(m.from)}</div>${m.subject ? `<div class="ph-subj">${esc(m.subject)}</div>` : ""}
+        ${(m.thread || [{ who: "them", text: m.body, day: m.day }])
+          .map((t) => `<div class="ph-bubble ${t.who === "me" ? "me" : "them"}">${esc(t.text)}</div>${t.score ? `<div class="ph-score">${t.score.notes.map((n) => `<div class="small ${n[0] === "✓" ? "good-text" : "warn-text"}">${esc(n)}</div>`).join("")}<div class="small"><strong>Relationship ${t.score.delta >= 0 ? "+" : ""}${t.score.delta}</strong></div></div>` : ""}`)
+          .join("")}
+        ${m.waiting ? `<div class="ph-bubble them typing"><i></i><i></i><i></i></div>` : ""}
+        <div class="small muted">${FP.fmtDate(b, m.day)}</div>
         ${m.lead && !m.accepted ? `<button class="btn primary block" id="ph-accept">Accept lead</button>` : ""}
         ${m.clientId ? `<a class="btn small block" href="#client/${m.clientId}">Open client file</a>` : ""}
         ${m.audit?.length ? m.audit.map((id) => `<a class="btn small block" href="#client/${id}/plan">Fix plan</a>`).join("") : ""}
-        ${m.needsReply && !m.replied ? `<textarea id="ph-reply" rows="4" placeholder="Write your reply…"></textarea><button class="btn primary block" id="ph-send">Send</button>${AI.enabled() ? `<button class="btn small block" id="ph-coach">${icon("sparkles")} Ask Claude how to reply</button>` : ""}` : ""}</div>`;
+        ${m.needsReply && !m.replied && !m.waiting ? `<textarea id="ph-reply" rows="4" placeholder="Write your reply…"></textarea><button class="btn primary block" id="ph-send">Send</button>${AI.enabled() ? `<button class="btn small block" id="ph-coach">${icon("sparkles")} Ask Claude how to reply</button>` : ""}` : ""}</div>`;
       document.getElementById("ph-back").onclick = () => ((this.open = null), this.render());
       document.getElementById("ph-accept")?.addEventListener("click", () => {
         const c = FP.acceptLead(m.id);

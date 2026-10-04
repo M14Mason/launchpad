@@ -30,7 +30,7 @@ const Clients = (() => {
   };
   const pickR = (r, arr) => arr[Math.floor(r() * arr.length)];
   const between = (r, a, b, step = 1) => Math.round((a + r() * (b - a)) / step) * step;
-  const usd = (n) => "$" + Math.round(n).toLocaleString();
+  const usd = (n) => (n < 0 ? "-$" : "$") + Math.abs(Math.round(n)).toLocaleString();
   const pctS = (n) => Math.round(n * 10) / 10 + "%";
   const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
 
@@ -147,7 +147,7 @@ const Clients = (() => {
     const owns = age > 30 && homeRoll < (age > 40 ? 0.6 : 0.35);
     const withFamily = !owns && age < 32 && homeRoll > 0.85;
     const housing = withFamily ? between(r, 300, 700, 50) : Math.round((gm * (owns ? 0.25 : 0.31) + between(r, -200, 300)) / 10) * 10;
-    const living = Math.round((gm * between(r, 20, 36) / 100 + nKids * 420 + (caregiver ? 600 : 0)) / 10) * 10;
+    let living = Math.round((gm * between(r, 20, 36) / 100 + nKids * 420 + (caregiver ? 600 : 0)) / 10) * 10;
     const debts = [];
     if (r() < 0.62) debts.push({ id: "cc", name: "Credit card", balance: between(r, 1200, 19000, 100), apr: between(r, 19, 29, 0.1) });
     if (age < 45 && r() < 0.55) debts.push({ id: "student", name: "Student loans", balance: between(r, 8000, 85000, 500), apr: between(r, 3.5, 7.5, 0.1) });
@@ -156,7 +156,20 @@ const Clients = (() => {
     if (r() < 0.14) debts.push({ id: "personal", name: "Personal loan", balance: between(r, 3000, 15000, 500), apr: between(r, 9, 17, 0.1) });
     debts.forEach((d) => (d.apr = Math.round(d.apr * 10) / 10));
     debts.forEach((d) => (d.min = Math.round(Math.max(35, d.id === "cc" ? d.balance * 0.03 : d.id === "student" ? d.balance * 0.011 : d.id === "medical" ? d.balance * 0.04 : d.balance * 0.025) / 5) * 5));
-    const minPay = debts.reduce((n, d) => n + d.min, 0);
+    let minPay = debts.reduce((n, d) => n + d.min, 0);
+    // Realistic household: after housing, spending and minimum payments, 8–25% of take-home is left over.
+    {
+      const want = Math.round(takeHome * between(r, 8, 25) / 100);
+      const surplus = takeHome - housing - living - minPay;
+      if (surplus < want) living = Math.max(Math.round(takeHome * 0.12 / 10) * 10, Math.round((living - (want - surplus)) / 10) * 10);
+      // Debt payments so big that nothing is left: shrink the biggest debt instead.
+      while (takeHome - housing - living - minPay < takeHome * 0.06 && debts.length) {
+        const d = debts.sort((a, b) => b.min - a.min)[0];
+        d.balance = Math.round(d.balance * 0.6 / 100) * 100;
+        d.min = Math.max(35, Math.round(d.min * 0.6 / 5) * 5);
+        minPay = debts.reduce((n, x) => n + x.min, 0);
+      }
+    }
     const expenses = housing + living;
     const cash = Math.max(300, Math.round((expenses * Math.pow(r(), 1.6) * 7) / 100) * 100);
     const hasPlan = ["salary", "hourly"].includes(payType) || job.includes("Navy");
@@ -177,6 +190,44 @@ const Clients = (() => {
     // Surprise goals: not on the intake form — the client brings them up mid-meeting, so you have to listen.
     const nHidden = difficulty === "easy" ? (r() < 0.4 ? 1 : 0) : difficulty === "tough" ? between(r, 1, 2) : 1;
     pool.slice(nExtra, nExtra + nHidden).forEach((g) => goals.push({ id: g.id, name: g.name, target: between(r, g.t[0], g.t[1], 1000), years: between(r, g.y[0], g.y[1]), priority: 4, say: g.say, hidden: true }));
+    // Feasibility: goals must be reachable with smart tradeoffs (challenging, never impossible).
+    {
+      const pmt = (target, start, years, rate) => {
+        const n = Math.max(1, years * 12);
+        const i = rate / 12;
+        const need = Math.max(0, target - start * Math.pow(1 + i, n));
+        return (need * i) / (Math.pow(1 + i, n) - 1);
+      };
+      const surplus = takeHome - housing - living - minPay;
+      // Retirement: funded by 401(k)/IRA saving — keep the needed amount within ~18% of gross pay.
+      const ret = goals.find((g) => g.id === "retire");
+      const cap = (income / 12) * 0.18;
+      let guard = 0;
+      while (ret && pmt(ret.target, k401 + roth, ret.years, 0.06) > cap && guard++ < 40) {
+        if (ret.years < Math.max(5, 67 - age)) {
+          ret.years++;
+          ret.name = ret.name.replace(/\d{2}/, String(age + ret.years));
+        } else ret.target = Math.round((ret.target * 0.92) / 10000) * 10000;
+      }
+      // Everything else comes out of the monthly surplus — together, no more than ~110% of it,
+      // so you'll have to prioritize, but a sensible plan can hit the important goals.
+      const others = goals.filter((g) => g.id !== "retire");
+      const total = () => others.reduce((n, g) => n + pmt(g.target, 0, g.years, g.years <= 3 ? 0.03 : 0.05), 0);
+      guard = 0;
+      const cost = (g) => pmt(g.target, 0, g.years, g.years <= 3 ? 0.03 : 0.05);
+      while (others.length && total() > surplus * 1.1 && guard++ < 600) {
+        // Trim the most expensive goal first: give it more time, then a smaller target.
+        const g = [...others].sort((a, b) => cost(b) - cost(a))[0];
+        if (!g.id.startsWith("college") && g.years < 12) g.years++;
+        else if (g.target > 3000) g.target = Math.max(3000, Math.floor((g.target * 0.9) / 1000) * 1000);
+        else {
+          // Still too much: drop the least important wish entirely.
+          const drop = [...others].sort((a, b) => b.priority - a.priority || cost(b) - cost(a))[0];
+          others.splice(others.indexOf(drop), 1);
+          goals.splice(goals.indexOf(drop), 1);
+        }
+      }
+    }
     // Risk questionnaire answers (0-4 each), consistent with who they are.
     const base = between(r, 0, 4);
     const horizon = goals.find((g) => g.priority <= 2)?.years || 10;
@@ -258,6 +309,10 @@ const Clients = (() => {
       const mult = [1, 1.3, 1.7, 2.4, 3.5][w];
       c.income = Math.round((c.income * mult) / 1000) * 1000;
       c.truth.takeHome = Math.round((c.truth.takeHome * mult * 0.93) / 10) * 10;
+      // Bigger paychecks come with a bigger lifestyle.
+      c.truth.housing = Math.round((c.truth.housing * (1 + (mult - 1) * 0.75)) / 10) * 10;
+      c.truth.living = Math.round((c.truth.living * (1 + (mult - 1) * 0.7)) / 10) * 10;
+      c.truth.expenses = c.truth.housing + c.truth.living;
       c.truth.brokerage = Math.round(([0, 30000, 120000, 450000, 1400000][w] * (0.7 + r() * 0.8)) / 1000) * 1000;
       c.truth.k401 = Math.round((c.truth.k401 * mult) / 500) * 500;
       c.portfolio = [{ month: 0, value: c.truth.k401 + c.truth.roth }];
@@ -583,7 +638,7 @@ Documents: you brought ${docs.filter((d) => d.status === "brought").map((d) => d
 Always say money as digits with a $ sign (like $1,850) and percentages as digits (like 6%), so they come through clearly.
 ${c.pendingEvents.length ? "SINCE THE LAST MEETING: " + c.pendingEvents.map((e) => e.text).join(" ") + " Bring this up early, in your own words." : ""}
 ${past ? "Earlier meetings: " + past : ""} Relationship with Mason so far: ${c.relationship}/100 (${c.relationship >= 70 ? "you trust him" : c.relationship >= 45 ? "warming up" : "still guarded"}).
-${type === "presentation" ? "Mason is presenting his financial plan today. Ask about anything unclear, push back if it doesn't fit you, and decide whether you'll follow it." : type === "review" ? "This is a follow-up review. Share updates and ask how you're doing on your goals." : type === "followup" ? "This is a short follow-up call. You already met once; Mason needs a few more details for your plan. Answer what he asks." : "This is your first meeting (discovery). Share details only when asked."}`;
+${type === "email" ? "You're emailing your planner between meetings. Only mention money details if they're relevant to the email." : type === "presentation" ? "Mason is presenting his financial plan today. Ask about anything unclear, push back if it doesn't fit you, and decide whether you'll follow it." : type === "review" ? "This is a follow-up review. Share updates and ask how you're doing on your goals." : type === "followup" ? "This is a short follow-up call. You already met once; Mason needs a few more details for your plan. Answer what he asks." : "This is your first meeting (discovery). Share details only when asked."}`;
   }
   function scenario(c, type) {
     const p = persona(c);
@@ -749,7 +804,7 @@ ${type === "presentation" ? "Mason is presenting his financial plan today. Ask a
     }
     const bands = Array.from({ length: years + 1 }, (_, y) => {
       const col = paths.map((p) => p[y]).sort((a, b) => a - b);
-      return { p10: col[Math.floor(n * 0.1)], p50: col[Math.floor(n * 0.5)], p90: col[Math.floor(n * 0.9)] };
+      return { p10: col[Math.floor(n * 0.1)], p25: col[Math.floor(n * 0.25)], p50: col[Math.floor(n * 0.5)], p75: col[Math.floor(n * 0.75)], p90: col[Math.floor(n * 0.9)] };
     });
     const finals = paths.map((p) => p[years]);
     return { bands, success: target ? finals.filter((v) => v >= target).length / n : null, median: bands[years].p50, mu, sd };
@@ -835,7 +890,9 @@ ${type === "presentation" ? "Mason is presenting his financial plan today. Ask a
     if (short.length && plan.alloc.stocks > 50) add("med", `Short-term goal(s) (${short.map((g) => g.name).join(", ")}) are in a ${plan.alloc.stocks}% stock portfolio.`, "Money needed within ~3 years belongs in cash or short-term bonds.");
     const surplus = k.takeHome - (k.expenses || 0) - k.minPay;
     const outflow = investing + (plan.efMonthly || 0) + (plan.extraDebt || 0);
-    if (k.expenses != null && outflow > surplus + 1) add("high", `The plan needs ${usd(outflow)}/mo but their known surplus is only ${usd(Math.max(0, surplus))}/mo.`, "Scale back savings targets or find spending cuts together.");
+    if (k.expenses != null && surplus < 0)
+      add("high", `Their known spending and minimum payments are ${usd(-surplus)}/mo more than their take-home pay${c.collected.takeHome ? "" : " (take-home is only estimated from the intake form — confirm it)"}.`, "Start with the budget: confirm their real take-home and find spending cuts before funding goals.");
+    else if (k.expenses != null && outflow > 0 && outflow > surplus + 1) add("high", `The plan needs ${usd(outflow)}/mo but their known surplus is only ${usd(surplus)}/mo.`, "Scale back savings targets, stretch timelines, or find spending cuts together.");
     if ((c.kids.length || c.married) && val(c, "insurance") !== "has a policy") add("med", "They have dependents and no confirmed life insurance.", "Recommend reviewing term life insurance.");
     return flags;
   }
@@ -938,5 +995,5 @@ ${type === "presentation" ? "Mason is presenting his financial plan today. Ask a
     });
   }
 
-  return { EVENTS, lifeEvent, MEETING_NAME, requestDocs, docsOf, STYLES, AGENDA, agendaStatus, all, find, update, saveAll, generate, fields, extract, advance, dateOf, persona, meetingType, scenario, recordMeeting, known, payoff, monteCarlo, needed90, mix, RISK_QS, MODELS, riskScore, STRESS, stress, jobLossRunway, compliance, grade, usd, pctS, val, fieldLabel, collectedGoals };
+  return { notesFor: (c) => hiddenNotes(c, "email"), EVENTS, lifeEvent, MEETING_NAME, requestDocs, docsOf, STYLES, AGENDA, agendaStatus, all, find, update, saveAll, generate, fields, extract, advance, dateOf, persona, meetingType, scenario, recordMeeting, known, payoff, monteCarlo, needed90, mix, RISK_QS, MODELS, riskScore, STRESS, stress, jobLossRunway, compliance, grade, usd, pctS, val, fieldLabel, collectedGoals };
 })();
