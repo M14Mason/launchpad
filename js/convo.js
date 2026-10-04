@@ -597,7 +597,7 @@ async function startPractice(btn, adaptive) {
     // Client-book meeting: the client file supplies everything (no AI setup needed).
     const cm = P.clientMeeting && Clients.find(P.clientMeeting.id);
     if (cm) {
-      sc = Clients.scenario(cm, P.clientMeeting.type);
+      sc = Clients.scenario(cm, P.clientMeeting.type, { reason: P.clientMeeting.reason });
       sc.offline = !AI.enabled();
       sc.revealed = [];
       sc.minutes = setupOpts.minutes;
@@ -1072,7 +1072,7 @@ function renderPracticeResult(saved) {
       <div class="row">${live && P.sc?.clientId ? `<a class="btn primary" href="#client/${P.sc.clientId}">${icon("arrow")} Open ${esc(P.sc.counterpart.name.split(" ")[0])}'s file</a>` : live ? `<button class="btn primary" id="pr-again">${icon("refresh")} Practice again</button><button class="btn" id="pr-new">New setup</button>` : `<a class="btn" href="#practice">‹ Practice</a>`}</div></div>
     ${
       live && P.clientReport
-        ? `<section class="card client-report"><div class="metrics">${metricCard("New facts collected", P.clientReport.found, `${P.clientReport.collected} of ${P.clientReport.total} total`, P.clientReport.found ? "good-text" : "warn-text")}${metricCard("Relationship", (P.clientReport.delta >= 0 ? "+" : "") + P.clientReport.delta, P.clientReport.rem.length ? "remembered " + P.clientReport.rem.join(", ") : "from this meeting", P.clientReport.delta >= 0 ? "good-text" : "bad-text")}</div></section>`
+        ? `<section class="card client-report"><div class="metrics">${metricCard("New facts collected", P.clientReport.found, `${P.clientReport.collected} of ${P.clientReport.total} total`, P.clientReport.found ? "good-text" : "warn-text")}${metricCard("Relationship", (P.clientReport.delta >= 0 ? "+" : "") + P.clientReport.delta, P.clientReport.rem.length ? "remembered " + P.clientReport.rem.join(", ") : "from this meeting", P.clientReport.delta >= 0 ? "good-text" : "bad-text")}${P.clientReport.mood ? metricCard("Their mood", P.clientReport.moodRead ? "Read it ✓" : "Missed it", `They were ${P.clientReport.mood} today${P.clientReport.moodRead ? " — you noticed (+2)" : ". Acknowledge it next time."}`, P.clientReport.moodRead ? "good-text" : "warn-text") : ""}</div>${P.clientReport.concepts?.length ? `<h3 class="mt">Concepts that came up</h3><div class="concept-cards">${P.clientReport.concepts.map((k) => `<div class="concept"><strong>${esc(k.title)}</strong><p class="small">${esc(k.text)}</p></div>`).join("")}</div>` : ""}</section>`
         : ""
     }
     <div class="result-grid">

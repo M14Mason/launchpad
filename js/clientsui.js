@@ -99,6 +99,7 @@ const CL_TABS = [
   ["meetings", "Meetings", "message"],
   ["tax", "Taxes", "layers"],
   ["income", "Retirement income", "sun"],
+  ["estate", "Estate", "shield"],
   ["doc", "Plan document", "file"],
 ];
 // The client journey: each step links to where you do it.
@@ -148,24 +149,31 @@ function renderClient(arg) {
     Motion.ensureVisible([...app.querySelectorAll(".jstep")], 1500);
   }
   const body = document.getElementById("cl-body");
-  ({ overview: clOverview, data: clData, plan: clPlan, sims: clSims, stress: clStress, meetings: clMeetings, doc: clDoc, tax: clTax, income: clIncome }[tab] || clOverview)(c, body);
+  ({ overview: clOverview, data: clData, plan: clPlan, sims: clSims, stress: clStress, meetings: clMeetings, doc: clDoc, tax: clTax, income: clIncome, estate: clEstate }[tab] || clOverview)(c, body);
   FPDock.attach();
 }
 
 function nextStepHTML(c, type) {
-  // Meetings happen on the calendar: due today/overdue → start; scheduled later → skip ahead or meet early.
+  // Meetings happen on the calendar. Today → start; later → skip ahead or move it; missed → reschedule.
   const b = FP.bookOf(c) || FP.book(c.book || "practice");
-  if (!c.next) c.next = { type, day: b.day };
-  const due = c.next.day <= b.day;
-  const when = due ? (c.next.day < b.day ? `<span class="bad-text">Overdue since ${FP.fmtDate(b, c.next.day)}</span>` : `<span class="good-text">Today</span>`) : `Scheduled ${FP.fmtDate(b, c.next.day, { weekday: "short", month: "short", day: "numeric" })}`;
   const docsLeft = Clients.docsOf(c).filter((d) => d.status !== "received").length;
-  const label = { discovery: "Start discovery meeting", followup: "Follow-up call to fill gaps", presentation: "Present your plan", review: c.next.annual ? "Annual review" : "Quarterly review" }[type];
-  const noPlan = type === "followup" && c.next.type === "presentation";
-  return `<div class="small">${when}${noPlan ? ` · Plan presentation` : ""}</div>
-    ${noPlan ? `<div class="small warn-text">Build and submit the plan first — until then this meeting is a follow-up call, not the presentation.</div>` : ""}
-    ${type === "followup" ? `<a class="btn primary block" href="#client/${c.id}/plan">${icon("pen")} Build the plan</a>` : ""}
-    ${due || type === "followup" ? `<button class="btn ${type === "followup" ? "" : "primary"} block" id="cl-meet">${icon("mic")} ${label}</button>` : `<button class="btn primary block" id="cl-skip">${icon("calendar")} Skip to ${FP.fmtDate(b, c.next.day, { month: "short", day: "numeric" })}</button><button class="btn block" id="cl-meet">${icon("mic")} Meet early</button>`}
-    ${docsLeft && c.meetings.length ? `<button class="btn block" id="cl-docs">${icon("mail")} Email document request (${docsLeft})</button>` : ""}`;
+  const docsBtn = docsLeft && c.meetings.length ? `<button class="btn block" id="cl-docs">${icon("mail")} Email document request (${docsLeft})</button>` : "";
+  if (c.stage === "lost") return `<div class="small bad-text">${esc(c.first)} left for another advisor.</div>`;
+  const n = c.next;
+  if (!n) return `<div class="small">No meeting booked.</div><button class="btn primary block" id="cl-book">${icon("calendar")} Book a ${Clients.MEETING_NAME[type].toLowerCase()}</button>${docsBtn}`;
+  if (n.missed)
+    return `<div class="small bad-text">Missed ${Clients.MEETING_NAME[n.type].toLowerCase()} (${FP.fmtDate(b, n.day)})${n.why === "noplan" ? " — they expected the plan" : ""}</div>
+      <button class="btn primary block" id="cl-move">${icon("calendar")} Reschedule with ${esc(c.first)}</button>
+      ${n.type === "presentation" && !c.plan?.submittedAt ? `<a class="btn block" href="#client/${c.id}/plan">${icon("pen")} Build the plan</a>` : ""}${docsBtn}`;
+  const today = n.day === b.day;
+  const noPlan = n.type === "presentation" && !c.plan?.submittedAt;
+  const label = { discovery: "discovery meeting", followup: "follow-up call", presentation: "plan presentation", review: n.annual ? "annual review" : "review meeting" }[type] || "meeting";
+  return `<div class="small">${today ? `<span class="good-text">Today</span> · ${Clients.MEETING_NAME[n.type]}` : `${Clients.MEETING_NAME[n.type]} · ${FP.fmtDate(b, n.day, { weekday: "short", month: "short", day: "numeric" })}`}</div>
+    ${noPlan ? `<div class="small warn-text">Build and submit the plan before the presentation.</div><a class="btn ${today ? "primary" : ""} block" href="#client/${c.id}/plan">${icon("pen")} Build the plan</a>` : ""}
+    ${today ? (noPlan ? `<button class="btn block" id="cl-meet" data-warn="1">${icon("mic")} Meet anyway (as a follow-up)</button>` : `<button class="btn primary block" id="cl-meet">${icon("mic")} Start ${label}</button>`) : `<button class="btn ${noPlan ? "" : "primary"} block" id="cl-skip">${icon("calendar")} Skip to ${FP.fmtDate(b, n.day, { weekday: "short", month: "short", day: "numeric" })}</button>`}
+    <button class="btn block" id="cl-move">${icon("calendar")} Reschedule</button>
+    ${type === "followup" && !today && FP.roomOn(b, b.day) >= FP.LOAD.followup ? `<button class="btn block" id="cl-quick">${icon("message")} Quick follow-up call today</button>` : ""}
+    ${docsBtn}`;
 }
 
 function nextStepHTML_old(c, type) {
@@ -186,16 +194,22 @@ function nextStepHTML_old(c, type) {
   return `${gapSel}<button class="btn primary block" id="cl-meet">${icon("mic")} ${label}</button>${docsLeft && c.meetings.length ? `<button class="btn block" id="cl-docs">${icon("mail")} Email document request (${docsLeft})</button>` : ""}`;
 }
 function wireNextStep(c, type) {
-  document.getElementById("cl-skip")?.addEventListener("click", () => {
-    const b = FP.bookOf(c) || FP.book(c.book || "practice");
-    const days = Math.max(0, (c.next?.day ?? b.day) - b.day);
+  const b = FP.bookOf(c) || FP.book(c.book || "practice");
+  const toMode = () => {
     const st = FP.state();
     if ((c.book || "practice") !== st.mode) {
       st.mode = c.book || "practice";
       FP.save(st);
     }
-    const res = FP.tick(days);
-    toast(`Skipped ${days} day${days === 1 ? "" : "s"}${res.unread ? ` — ${res.unread} new message${res.unread === 1 ? "" : "s"}` : ""}.`);
+  };
+  document.getElementById("cl-skip")?.addEventListener("click", () => {
+    toMode();
+    fpSkip(Math.max(1, (c.next?.day ?? b.day) - b.day));
+  });
+  document.getElementById("cl-move")?.addEventListener("click", () => pickReschedule(Clients.find(c.id)));
+  document.getElementById("cl-book")?.addEventListener("click", () => {
+    Clients.update(c.id, (x) => FP.schedule(x, type, b.day));
+    toast(`Booked for ${FP.fmtDate(b, Clients.find(c.id).next.day)}.`);
     route.keepScroll = true;
     route();
   });
@@ -207,32 +221,16 @@ function wireNextStep(c, type) {
     route();
   });
   const meetBtn = document.getElementById("cl-meet");
-  if (meetBtn) meetBtn.onclick = () => {
-    const gap = 0; // time now moves with the calendar (skip day / week / month)
-    let events = [];
-    if (gap > 0)
-      Clients.update(c.id, (x) => {
-        const n = x.events.length;
-        Clients.advance(x, gap);
-        events = x.events.slice(n);
-        // Plan results move the relationship: progress toward goals builds trust.
-        if (x.plan?.submittedAt) {
-          const start = x.portfolio[x.portfolio.length - 2]?.value || 0;
-          const end = x.portfolio[x.portfolio.length - 1]?.value || 0;
-          const debtDown = x.truth.debts.reduce((s, d) => s + d.balance, 0) < (x._lastDebt ?? Infinity);
-          const delta = (end >= start ? 2 : -2) + (debtDown ? 2 : 0);
-          x.relationship = Math.max(0, Math.min(100, x.relationship + delta));
-          x.relHistory.push({ month: x.month, delta, reason: `Plan results over ${gap} month${gap === 1 ? "" : "s"}: portfolio ${end >= start ? "up" : "down"}${debtDown ? ", debt down" : ""}` });
-        }
-        x._lastDebt = x.truth.debts.reduce((s, d) => s + d.balance, 0);
-      });
-    if (events.length) toast("Since your last meeting: " + events.map((e) => e.text).join(" "));
-    P.clientMeeting = { id: c.id, type: Clients.meetingType(Clients.find(c.id)) };
-    P.phase = "setup";
-    P.mode = "fp";
-    P.opts.fpRole = "planner";
-    go("practice/fp");
-  };
+  if (meetBtn)
+    meetBtn.onclick = () => {
+      if (meetBtn.dataset.warn && !confirm(`${c.first} expects to see the plan. Meeting without one costs trust, and you'll still need to reschedule the presentation. Continue?`)) return;
+      toMode();
+      fpStartMeeting(Clients.find(c.id), Clients.meetingType(Clients.find(c.id)));
+    };
+  document.getElementById("cl-quick")?.addEventListener("click", () => {
+    toMode();
+    fpStartMeeting(Clients.find(c.id), "followup");
+  });
 }
 
 // Everything a planner has on file before the first meeting: intake form, pre-meeting questionnaire, documents.
@@ -258,11 +256,11 @@ function intakeHTML(c, { compact = false } = {}) {
 
 function clOverview(c, el) {
   const k = Clients.known(c);
-  el.innerHTML = `
+  el.innerHTML = `${decisionCards(c)}
     <div class="two-col">
       <section class="card"><h2>Client file</h2><p class="small muted">What a planner has before the first meeting. Everything else you learn by asking.</p>${intakeHTML(c)}</section>
       <section class="card"><h2>Timeline</h2><div class="timeline">${[
-        ...c.meetings.map((m) => ({ month: m.month, at: m.at, html: `<strong>${m.type[0].toUpperCase() + m.type.slice(1)} meeting</strong> · scored ${m.score} · learned ${m.found.length} new fact${m.found.length === 1 ? "" : "s"}${m.remembered?.length ? ` · remembered ${m.remembered.join(", ")}` : ""}` })),
+        ...c.meetings.map((m) => ({ month: m.month, at: m.at, html: `<strong>${Clients.MEETING_NAME[m.type] || m.type}</strong> · scored ${m.score} · learned ${(m.found || []).length} new fact${(m.found || []).length === 1 ? "" : "s"}${m.remembered?.length ? ` · remembered ${m.remembered.join(", ")}` : ""}` })),
         ...c.events.map((e) => ({ month: e.month, at: 0, html: `${icon("alert")} ${esc(e.text)}` })),
         ...(c.plan?.submittedAt ? [{ month: c.plan.month ?? c.month, at: c.plan.submittedAt, html: `${icon("check")} Plan submitted · grade ${c.plan.grade.total}/100` }] : []),
       ]
@@ -278,6 +276,7 @@ function clOverview(c, el) {
       <p class="small muted">Moves with how each meeting goes, how their plan performs, and whether you remember personal details from earlier meetings.</p></section>
     ${k.cash != null || c.portfolio.length > 1 ? `<section class="card"><h2>Investments over time</h2>${linesChart([{ name: "Retirement accounts", pts: c.portfolio.map((p) => p.value) }], { xLabel: Clients.dateOf(c) })}</section>` : ""}
     <div class="row"><button class="btn ghost" id="cl-del">${icon("trash")} Remove client</button></div>`;
+  wireDecisions(c, el);
   document.getElementById("cl-del").onclick = () => {
     if (!confirm(`Remove ${c.first} ${c.last} and all their meetings? (A restore point is kept in Settings.)`)) return;
     Backup.snapshot("Automatic — before removing a client");
@@ -297,7 +296,7 @@ function clData(c, el) {
   el.innerHTML = `
     <div class="stats"><div class="card stat"><div class="k">Facts collected</div><div class="stat-v">${F.length - missing.length}<span class="muted">/${F.length}</span></div></div>
       <div class="card stat"><div class="k">Meetings</div><div class="stat-v">${c.meetings.length}</div></div>
-      <div class="card stat"><div class="k">Data rule</div><div class="small">${tough ? "Tough client: missing facts are hidden. You may fill gaps yourself — but the grade checks the truth." : "Missing facts become the agenda for your next meeting."}</div></div></div>
+      <div class="card stat"><div class="k">Data rule</div><div class="small">${tough ? "Tough client: missing facts are hidden. You may fill gaps yourself — but the grade checks the truth." : "Missing facts become the agenda for your next meeting. If a client told you something the app missed, type it in the box."}</div></div></div>
     ${tough ? `<button class="btn" id="cl-show">${icon("search")} ${show ? "Hide missing" : "Show missing"}</button>` : ""}
     ${secs
       .map((sec) => {
@@ -308,7 +307,7 @@ function clData(c, el) {
             const got = c.collected[f.key];
             const man = c.manual?.[f.key];
             return `<div class="data-row ${got ? "got" : "miss"}"><div class="grow"><strong>${esc(f.label)}</strong>${got ? `<div class="small muted">${got.doc ? `${icon("file")} ${esc(got.doc)}` : `“${esc(got.quote)}” — meeting ${got.meeting}`}${got.approx ? " · approximate" : ""}</div>` : f.key === "riskq" ? `<div class="small warn-text">It's a document: ask them to send it (Email document request, or ask for it in a meeting)</div>` : tough ? `<div class="small muted">Not collected — fill it in if you can justify it.</div>` : `<div class="small warn-text">Ask next meeting</div>`}</div>
-              <div class="data-val">${got ? fmt(f, got.value) : tough && f.num != null ? `<input class="mini-field" type="number" step="any" data-man="${f.key}" value="${man ?? ""}" placeholder="?">` : "—"}</div></div>`;
+              <div class="data-val">${got ? fmt(f, got.value) : f.num != null ? `<input class="mini-field" type="number" step="any" data-man="${f.key}" value="${man ?? ""}" placeholder="${tough ? "?" : "heard it?"}" title="They told you but the app missed it? Type it here.">` : "—"}</div></div>`;
           })
           .join("")}</section>`;
       })
@@ -549,13 +548,105 @@ function clStress(c, el) {
 }
 
 function clMeetings(c, el) {
-  el.innerHTML = c.meetings.length
-    ? c.meetings
-        .slice()
-        .reverse()
-        .map((m, i) => `<section class="card"><div class="section-head"><h2>${m.type[0].toUpperCase() + m.type.slice(1)} · ${Clients.dateOf(c, m.month)}</h2>${ring(m.score, { size: 46 })}</div><p class="small">${esc(m.summary || "")}</p>${m.notes ? `<div class="callout small"><strong>Your notes</strong><p class="pre">${esc(m.notes)}</p></div>` : ""}<p class="small muted">Learned: ${m.found.map((k) => esc(Clients.fieldLabel(c, k))).join(", ") || "nothing new"}${m.remembered?.length ? " · remembered " + m.remembered.join(", ") : ""}</p><details><summary>Transcript</summary><div class="transcript full">${m.thread.map((t) => `<p><strong>${t.from === "me" ? "You" : esc(c.first)}:</strong> ${esc(t.text)}</p>`).join("")}</div></details></section>`)
-        .join("")
-    : empty("No meetings yet.");
+  if (!c.meetings.length) return (el.innerHTML = empty("No meetings yet."));
+  el.innerHTML = c.meetings
+    .map((m, idx) => ({ m, idx }))
+    .reverse()
+    .map(({ m, idx }) => {
+      const tips = Clients.coachLines(c, m);
+      const nTips = Object.values(tips).flat().filter((t) => t[0] !== "good").length;
+      return `<section class="card"><div class="section-head"><div><h2>${esc(Clients.MEETING_NAME[m.type] || m.type)} · ${Clients.dateOf(c, m.month)}</h2>
+        <div class="small muted">${[m.reason ? `“${esc(m.reason)}”` : "", m.guest ? `with ${esc(m.guest)}` : "", m.mood ? `they were ${esc(m.mood)} — ${m.moodRead ? "you noticed" : "you missed it"}` : ""].filter(Boolean).join(" · ")}</div></div>${ring(m.score, { size: 46 })}</div>
+        <p class="small">${esc(m.summary || "")}</p>${m.notes ? `<div class="callout small"><strong>Your notes</strong><p class="pre">${esc(m.notes)}</p></div>` : ""}
+        <p class="small muted">Learned: ${(m.found || []).map((k) => esc(Clients.fieldLabel(c, k))).join(", ") || "nothing new"}${m.remembered?.length ? " · remembered " + m.remembered.join(", ") : ""}</p>
+        ${m.concepts?.length ? `<details><summary>Concepts that came up (${m.concepts.length})</summary><div class="concept-cards">${m.concepts.map((k) => `<div class="concept"><strong>${esc(k.title)}</strong><p class="small">${esc(k.text)}</p></div>`).join("")}</div></details>` : ""}
+        <details ${location.hash.endsWith("/meetings") && idx === c.meetings.length - 1 ? "" : ""}><summary>Replay with coaching${nTips ? ` (${nTips} tip${nTips === 1 ? "" : "s"})` : ""}</summary><div class="transcript full replay">${(m.thread || [])
+          .map((t, i) => `<div class="rp-line ${t.from === "me" ? "me" : "them"}"><p><strong>${t.from === "me" ? "You" : esc(c.first)}:</strong> ${esc(t.text)}</p>${(tips[i] || []).map((x) => `<div class="rp-tip ${x[0]}">${x[0] === "good" ? icon("check") : icon("bulb")} ${esc(x[1])}</div>`).join("")}</div>`)
+          .join("")}</div>
+          ${AI.enabled() ? `<button class="btn small" data-deep="${idx}">${icon("sparkles")} Deeper coaching from Claude</button><div class="small" id="deep-${idx}"></div>` : ""}</details></section>`;
+    })
+    .join("");
+  el.querySelectorAll("[data-deep]").forEach((btn) =>
+    btn.addEventListener("click", (e) =>
+      busy(e.currentTarget, async () => {
+        const m = c.meetings[+btn.dataset.deep];
+        const out = await AI.ask(
+          `You're a senior financial planner coaching Mason (15, learning). Here's his practice ${m.type} meeting with ${c.first}. Pick the 3 moments that mattered most. For each, quote his line, say what it did to the client, and give a better line he could have used. Plain text, under 220 words.\n\n${m.thread.map((t) => `${t.from === "me" ? "Mason" : c.first}: ${t.text}`).join("\n")}`,
+          { maxTokens: 900 }
+        );
+        document.getElementById("deep-" + btn.dataset.deep).innerHTML = `<div class="callout"><p class="pre">${esc(out)}</p></div>`;
+      })
+    )
+  );
+}
+
+// ---------- estate basics ----------
+function clEstate(c, el) {
+  const ep = c.estatePlan || {};
+  const minors = c.kids.some((k) => k.age < 18);
+  const items = [
+    { key: "will", fact: "estate-will", title: "Will", why: "Says who gets what, and (with kids) who raises them. Without one, state law decides.", rec: "Draft a will" },
+    { key: "benef", fact: "estate-benef", title: "Beneficiaries", why: "Retirement accounts and life insurance go to whoever is on the beneficiary form — even if the will says otherwise. Check them after any marriage, divorce or new baby.", rec: "Review beneficiaries on every account" },
+    ...(minors ? [{ key: "guardian", fact: "estate-guardian", title: "Guardian for the kids", why: `If something happened to ${c.married || c.partner ? "both parents" : esc(c.first)}, who raises ${c.kids.filter((k) => k.age < 18).map((k) => esc(k.name)).join(" and ")}? It's named in the will.`, rec: "Name a guardian in the will" }] : []),
+    { key: "poa", fact: null, title: "Powers of attorney & health directive", why: "Lets someone they trust handle money and medical decisions if they can't. Often overlooked by younger clients.", rec: "Set up financial and healthcare powers of attorney" },
+  ];
+  el.innerHTML = `<section class="card"><h2>Estate basics</h2><p class="small muted">Not legal advice — planners spot the gaps and refer to an estate attorney. Ask about these in a meeting (try “Do you have a will?” or “Who's listed as your beneficiary?”), then check what you'd recommend.</p>
+    ${items
+      .map((it) => {
+        const v = it.fact ? Clients.val(c, it.fact) : null;
+        return `<div class="estate-row"><div class="grow"><div class="row-title">${it.title} ${it.fact ? (v == null ? `<span class="pill">Ask them</span>` : v === "yes" ? `<span class="pill good">In place</span>` : `<span class="pill pill-urgent">Missing</span>`) : `<span class="pill">Ask them</span>`}</div><p class="small muted">${it.why}</p></div>
+          <label class="check"><input type="checkbox" data-est="${it.key}" ${ep[it.key] ? "checked" : ""}> ${esc(it.rec)}</label></div>`;
+      })
+      .join("")}
+    <p class="small muted">Your recommendations appear in the compliance check and the plan document.</p></section>`;
+  el.querySelectorAll("[data-est]").forEach((cb) =>
+    cb.addEventListener("change", () => {
+      Clients.update(c.id, (x) => {
+        x.estatePlan ||= {};
+        x.estatePlan[cb.dataset.est] = cb.checked;
+      });
+      toast(cb.checked ? "Added to your recommendations." : "Removed.");
+    })
+  );
+}
+
+// ---------- big decisions: run the numbers with them ----------
+const DECISION_UI = {
+  buyrent: { title: "Buy or keep renting?", inputs: [["price", "Home price", (c, e) => e.n * 1000], ["rate", "Mortgage rate %", () => 6.5], ["down", "Down payment %", () => 10], ["rent", "Their rent now /mo", (c) => Clients.val(c, "housing") ?? c.truth.housing]], calc: (v, c) => { const loan = v.price * (1 - v.down / 100); const i = v.rate / 1200; const pi = (loan * i) / (1 - Math.pow(1 + i, -360)); const own = pi + (v.price * 0.012) / 12 + (v.price * 0.01) / 12 + (v.down < 20 ? (loan * 0.007) / 12 : 0); const cash = v.price * (v.down / 100 + 0.03); const k = Clients.known(c); return [`Owning: about ${Clients.usd(own)}/mo (mortgage ${Clients.usd(pi)} + taxes, insurance, upkeep${v.down < 20 ? " + PMI" : ""}) vs. rent ${Clients.usd(v.rent)}/mo.`, `Cash needed up front: about ${Clients.usd(cash)} (down payment + ~3% closing).${k.cash != null ? ` They have ${Clients.usd(k.cash)} saved.` : ""}`, own > k.takeHome * 0.33 ? `⚠ That's ${Math.round((own / k.takeHome) * 100)}% of take-home pay — above the ~30% comfort zone.` : `Housing would be ${Math.round((own / k.takeHome) * 100)}% of take-home pay.`]; } },
+  job: { title: "Take the job offer?", inputs: [["newPay", "New salary", (c, e) => e.n * 1000], ["oldPay", "Current salary", (c) => c.income], ["oldMatch", "Current match %", (c) => Clients.val(c, "match") ?? c.truth.match], ["newMatch", "New match %", () => 0], ["health", "Extra health cost /yr", () => 2400]], calc: (v) => { const a = v.oldPay * (1 + v.oldMatch / 100); const b = v.newPay * (1 + v.newMatch / 100) - v.health; return [`Current total: ${Clients.usd(a)}/yr (salary + match).`, `New total: ${Clients.usd(b)}/yr (salary + match − extra health costs).`, b > a ? `The offer is worth about ${Clients.usd(b - a)} more a year — then weigh growth, stability and commute.` : `The offer is actually worth ${Clients.usd(a - b)} LESS a year once the match and benefits are counted.`]; } },
+  lend: { title: "Lend family money?", inputs: [["amt", "Loan amount", (c, e) => e.n * 1000], ["cash", "Their savings", (c) => Clients.val(c, "cash") ?? 0], ["spend", "Monthly expenses", (c) => Clients.known(c).expenses ?? c.truth.expenses]], calc: (v) => { const before = v.cash / Math.max(1, v.spend); const after = Math.max(0, v.cash - v.amt) / Math.max(1, v.spend); return [`Emergency fund goes from ${before.toFixed(1)} to ${after.toFixed(1)} months of expenses.`, after < 3 ? "⚠ That drops below 3 months — risky if they lose income." : "They'd still have a solid cushion.", "Rule of thumb: only lend what they could afford to never get back, and put the terms in writing."]; } },
+  car: { title: "Lease or buy used?", inputs: [["lease", "Lease /mo", (c, e) => e.n], ["price", "Used car price", () => 18000], ["rate", "Auto loan rate %", () => 7.5], ["years", "Years they'll keep it", () => 6]], calc: (v) => { const i = v.rate / 1200; const pay = (v.price * i) / (1 - Math.pow(1 + i, -60)); const leaseCost = v.lease * 12 * v.years + 2500 * Math.ceil(v.years / 3); const buyCost = pay * 60 + v.years * 900 - v.price * Math.max(0.15, 0.6 - v.years * 0.07); return [`Leasing for ${v.years} years: about ${Clients.usd(leaseCost)} (new lease every 3 years).`, `Buying used: loan payment ${Clients.usd(pay)}/mo for 5 years; total net cost about ${Clients.usd(buyCost)} after resale.`, leaseCost > buyCost ? `Buying saves about ${Clients.usd(leaseCost - buyCost)}.` : `Leasing is cheaper by ${Clients.usd(buyCost - leaseCost)} here.`]; } },
+  school: { title: "Go back to school?", inputs: [["cost", "Program cost", () => 14000], ["raise", "Expected raise /yr", (c) => Math.round(c.income * 0.12)], ["years", "Years to recover", () => 0]], calc: (v) => { const after = v.raise * 0.72; const payback = v.cost / Math.max(1, after); return [`After taxes the raise is worth about ${Clients.usd(after)}/yr.`, `The program pays for itself in about ${payback.toFixed(1)} years.`, "Ask: is the raise realistic? Does the employer offer tuition help? Can they cash-flow it without debt?"]; } },
+};
+function decisionCards(c) {
+  const open = (c.events || []).filter((e) => e.decision && !e.resolved && DECISION_UI[e.decision]).slice(-2);
+  return open
+    .map((e) => {
+      const d = DECISION_UI[e.decision];
+      const idx = c.events.indexOf(e);
+      return `<section class="card decision" data-dec="${idx}"><div class="section-head"><h2>${icon("scan")} Decision helper: ${d.title}</h2><button class="btn small" data-resolve="${idx}">Mark discussed</button></div><p class="small muted">${esc(e.say || e.text)}</p>
+        <div class="dec-inputs">${d.inputs.map(([k, l, f]) => `<label class="field"><span>${l}</span><input type="number" step="any" data-k="${k}" value="${Math.round((f(c, e) ?? 0) * 100) / 100}"></label>`).join("")}</div><ul class="dec-out small"></ul><p class="small muted">Use these numbers in your reply or your next meeting.</p></section>`;
+    })
+    .join("");
+}
+function wireDecisions(c, el) {
+  el.querySelectorAll("[data-dec]").forEach((card) => {
+    const e = c.events[+card.dataset.dec];
+    const d = DECISION_UI[e.decision];
+    const calc = () => {
+      const v = Object.fromEntries([...card.querySelectorAll("[data-k]")].map((i) => [i.dataset.k, +i.value || 0]));
+      card.querySelector(".dec-out").innerHTML = d.calc(v, c).map((x) => `<li>${esc(x)}</li>`).join("");
+    };
+    card.querySelectorAll("[data-k]").forEach((i) => i.addEventListener("input", calc));
+    calc();
+  });
+  el.querySelectorAll("[data-resolve]").forEach((btn) =>
+    btn.addEventListener("click", () => {
+      Clients.update(c.id, (x) => (x.events[+btn.dataset.resolve].resolved = true));
+      route.keepScroll = true;
+      route();
+    })
+  );
 }
 
 function clDocHTML(c) {
@@ -574,6 +665,7 @@ function clDocHTML(c) {
     ]
       .map(([a, b]) => `<tr><th>${a}</th><td>${esc(b)}</td></tr>`)
       .join("")}</tbody></table>
+    ${Object.values(c.estatePlan || {}).some(Boolean) ? `<h2>Estate basics</h2><ul>${[["will", "Draft a will (see an estate attorney)"], ["benef", "Review the beneficiaries on every account"], ["guardian", "Name a guardian for your children"], ["poa", "Set up financial and healthcare powers of attorney"]].filter(([k2]) => c.estatePlan[k2]).map(([, t]) => `<li>${t}</li>`).join("")}</ul>` : ""}
     <h2>Your plan</h2><ol>
       <li><strong>Emergency fund:</strong> build to ${Clients.usd((k.expenses || 0) * plan.efMonths)} (${plan.efMonths} months of expenses), saving ${Clients.usd(plan.efMonthly)}/month.</li>
       ${k.debts.length ? `<li><strong>Debt:</strong> ${plan.debtStrategy === "snowball" ? "snowball (smallest balance first)" : "avalanche (highest interest first)"} with ${Clients.usd(plan.extraDebt)}/month extra.</li>` : ""}
@@ -608,6 +700,7 @@ function renderClientBrief() {
       <p class="muted">${esc(c.age + " · " + c.job + " · " + (c.married ? "married" : "single") + (c.kids.length ? " · " + c.kids.length + " kid(s)" : ""))}</p>${relBar(c)}</div>
       <div class="ps-stage"><div class="orb-host" id="ps-orb"></div></div></section>
     <div class="practice-setup"><section class="card"><h2>Your agenda</h2>
+      ${m.reason ? `<div class="notice">${icon("message")} ${esc(c.first)} called: “${esc(m.reason)}”</div>` : ""}
       ${c.pendingEvents.length ? `<div class="notice warn">${icon("alert")} Something changed since your last meeting — let ${esc(c.first)} tell you about it.</div>` : ""}
       ${m.type === "presentation" ? `<p class="small">Present your plan (grade ${c.plan?.grade?.total ?? "—"}/100) in plain English and connect each step to their goals.</p>` : ""}
       ${c.difficulty === "tough" && m.type !== "presentation" ? `<p class="small muted">Tough client — no checklist. Cover cash flow, debts, savings, retirement, goals, risk and protection, and anything new.</p>` : `<ul class="small agenda-list">${Clients.agendaFor(c, m.type).map((a) => `<li>${esc(a.label)}</li>`).join("")}</ul>`}
@@ -685,7 +778,7 @@ function deskRefresh() {
   const fresh = got.filter((f) => !before.has(f.key));
   deskRefresh.shown = got.map((f) => f.key);
   if (window.gsap && !Motion.reduced) fresh.forEach((f) => gsap.fromTo(facts.querySelector(`[data-fk="${f.key}"]`), { backgroundColor: "rgba(34,197,94,.25)" }, { backgroundColor: "rgba(34,197,94,0)", duration: 1.6 }));
-  const ag = Clients.agendaStatus(c, P.sc.meetingType, P.thread);
+  const ag = Clients.agendaStatus(c, P.sc.meetingType, P.thread, P.sc);
   const prev = deskRefresh.done || {};
   document.getElementById("desk-agenda").innerHTML = `<div class="agenda">${ag.map((a) => `<div class="ag-row ${a.done ? "done" : ""}" data-ag="${a.id}"><span class="ag-check">${a.done ? icon("check") : ""}</span>${esc(a.label)}${a.progress && !a.done ? ` <span class="muted">${a.progress}</span>` : ""}</div>`).join("")}</div><div class="small muted mt-s">${ag.filter((a) => a.done).length}/${ag.length} covered</div>`;
   if (window.gsap && !Motion.reduced) ag.filter((a) => a.done && !prev[a.id]).forEach((a) => gsap.fromTo(document.querySelector(`[data-ag="${a.id}"] .ag-check`), { scale: 0.3 }, { scale: 1, duration: 0.5, ease: "back.out(3)" }));
