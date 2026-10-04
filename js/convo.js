@@ -753,9 +753,11 @@ function renderLive() {
   setOrb(P.orb || "tap");
   document.getElementById("lv-type").onclick = () => {
     P.typing = !P.typing;
-    document.getElementById("lv-typebox").hidden = !P.typing;
+    syncTypeUI();
     if (P.typing) document.getElementById("lv-text").focus();
+    else if (!P.speaking && !P.thinking && !P.micBlocked) listen();
   };
+  syncTypeUI();
   const sendTyped = () => {
     const t = document.getElementById("lv-text");
     if (!t.value.trim() || P.thinking) return;
@@ -767,6 +769,18 @@ function renderLive() {
   };
   document.getElementById("lv-typesend").onclick = sendTyped;
   document.getElementById("lv-text").addEventListener("keydown", (e) => e.key === "Enter" && !e.shiftKey && (e.preventDefault(), sendTyped()));
+}
+
+// Typing mode: show the text box, hide the voice-only "Send now", and offer to switch back.
+function syncTypeUI() {
+  const box = document.getElementById("lv-typebox");
+  if (!box) return;
+  box.hidden = !P.typing;
+  const send = document.getElementById("lv-send");
+  if (send) send.hidden = !!P.typing;
+  const tb = document.getElementById("lv-type");
+  if (tb) tb.textContent = P.typing ? (P.micBlocked ? "Mic blocked — typing" : "Use the mic instead") : "Type instead";
+  if (tb) tb.disabled = !!(P.typing && P.micBlocked);
 }
 
 // Orb states: tap (waiting for you), live (listening), speaking, thinking.
@@ -956,7 +970,8 @@ function listen() {
         setOrb("tap");
         if (err === "not-allowed" || err === "service-not-allowed") {
           P.micBlocked = true;
-          document.getElementById("lv-typebox")?.removeAttribute("hidden");
+          P.typing = true;
+          syncTypeUI();
           setStatus("The browser blocked the mic or speech recognition. Allow the microphone for this site, then tap the mic — or type below.", "warn");
         } else if ((err === "network" || err === "audio-capture") && (P.netRetries = (P.netRetries || 0) + 1) <= 2) {
           setStatus("Reconnecting the mic…", "warn");

@@ -194,6 +194,14 @@ function renderFP(arg = "") {
     FP.setBook(b3);
     return renderFP(arg);
   }
+  // One-time: old routine messages stop counting as unread.
+  if (!b.quiet1) {
+    const b4 = FP.book(mode);
+    for (const m of b4.inbox) if (["team", "report"].includes(m.kind) || (m.kind === "reminder" && !/⚠️|missed|Heads up|unhappy|frustrated/i.test(m.body || ""))) m.read = true;
+    b4.quiet1 = true;
+    FP.setBook(b4);
+    return renderFP(arg);
+  }
   const list = FP.clientsIn(mode);
   const tasks = fpTasks(b, list);
   const role = FP.ROLES[b.role || 0];

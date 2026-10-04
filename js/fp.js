@@ -118,7 +118,9 @@ const FP = (() => {
 
   function push(b, msg) {
     b.seq = (b.seq || 0) + 1;
-    b.inbox.unshift({ id: b.mode[0] + b.seq, day: b.day, read: false, ...msg });
+    // Routine team chatter, reminders and reports don't pile up as "unread" — only things that need you do.
+    const routine = ["team", "report"].includes(msg.kind) || (msg.kind === "reminder" && !/⚠️|missed|Heads up|unhappy|frustrated/i.test(msg.body || ""));
+    b.inbox.unshift({ id: b.mode[0] + b.seq, day: b.day, read: routine && !msg.needsReply, ...msg });
     b.inbox = b.inbox.slice(0, 150);
   }
 
@@ -352,14 +354,14 @@ const FP = (() => {
         const lines = [
           [TEAM.assistant, c && `${c.first} ${c.last} called while you were out — they said it's not urgent. Maybe drop them a note.`],
           [TEAM.assistant, "The printer on 3 is jammed again. Use the one by the kitchen if you need to print plans."],
-          [TEAM.assistant, c && `I put ${c.first}'s paperwork in their file. Let me know if you need anything else before the next meeting.`],
+          [TEAM.assistant, c && c.meetings.length && `I filed the notes from your last meeting with ${c.first}. Let me know if you need anything before the next one.`],
           [TEAM.compliance, "Reminder: never put guarantees or return promises in client emails. Every email is archived."],
           [TEAM.compliance, "Quick tip: document WHY each recommendation fits the client. If it isn't written down, it didn't happen."],
           [TEAM.compliance, "Annual training is due at the end of the month. It takes about 30 minutes."],
           [TEAM.manager, "Team lunch Friday — my treat. Bring one client win to share."],
           [TEAM.manager, "Coaching tip: in your next meeting, try summarizing what the client said before giving advice. It builds trust fast."],
           [TEAM.manager, c && `How's it going with ${c.first}? Let me know if you want me to sit in on the next meeting.`],
-          [TEAM.ops, c && `Account paperwork for ${c.first} ${c.last} is processed.`],
+          [TEAM.ops, "Reminder: quarterly statements go out to clients next week — expect a few questions."],
           [TEAM.ops, "Systems maintenance tonight at 9pm — the client portal will be down for an hour."],
           [TEAM.peer, "Do you have a good way to explain sequence-of-returns risk? A client asked me and I blanked 😅"],
           [TEAM.peer, "Coffee run — want anything?"],
@@ -373,14 +375,17 @@ const FP = (() => {
         if (c.next && !c.next.missed && c.next.day === b.day && c.next.type === "presentation" && !c.plan?.submittedAt)
           push(b, { app: "messages", from: TEAM.assistant, clientId: c.id, body: `⚠️ ${c.first}'s plan presentation is TODAY and the plan isn't built. Build it now or reschedule with them.`, kind: "reminder" });
       // Friday: the week in review.
-      if (today.getDay() === 5) {
-        const w = b.week || { held: 0, missed: 0, replies: 0, calls: 0 };
-        const unanswered = b.inbox.filter((m) => m.clientId && m.needsReply && !m.replied && !m.ignored).length;
+      const w0 = b.week || { held: 0, missed: 0, replies: 0, calls: 0 };
+      const waiting0 = b.inbox.filter((m) => m.clientId && m.needsReply && !m.replied && !m.ignored).length;
+      if (today.getDay() === 5 && clients.length && (w0.held + w0.calls + w0.replies + w0.missed > 0 || waiting0 > 0)) {
+        const w = w0;
+        const unanswered = waiting0;
         const avg = clients.length ? Math.round(clients.reduce((n, c) => n + c.relationship, 0) / clients.length) : 0;
         const focus = w.missed ? "Don't miss meetings — reschedule early if you have to." : unanswered > 2 ? "Clear your inbox — clients notice slow replies." : avg < 50 ? "Relationships are lukewarm. Remember personal details and follow up on their news." : "Keep the momentum. Try to get every plan presented within two weeks of discovery.";
         push(b, { app: "messages", from: TEAM.manager, body: `📋 Week in review: ${w.held} meeting${w.held === 1 ? "" : "s"} held, ${w.calls} call${w.calls === 1 ? "" : "s"}, ${w.replies} email${w.replies === 1 ? "" : "s"} answered, ${w.missed} missed. ${unanswered} email${unanswered === 1 ? "" : "s"} waiting. Average relationship ${avg}/100. Focus next week: ${focus}`, kind: "report" });
         b.week = { held: 0, missed: 0, replies: 0, calls: 0 };
       }
+      if (today.getDay() === 5) b.week = { held: 0, missed: 0, replies: 0, calls: 0 };
       // Team: meeting reminders, overdue follow-ups, ignored emails.
       for (const c of clients) {
         if (c.next && !c.next.missed && c.next.day === b.day + 1) push(b, { app: "messages", from: TEAM.assistant, clientId: c.id, body: `Reminder: ${c.first} ${c.last} — ${Clients.MEETING_NAME[c.next.type] || "meeting"} is tomorrow (${fmtDate(b, c.next.day)}).`, kind: "reminder" });

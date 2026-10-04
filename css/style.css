@@ -1338,3 +1338,5 @@ label.check input { margin-top: 3px; }
 .warn-btn { border-color: var(--warn); color: var(--warn); }
 .fp-modal textarea { width: 100%; margin-top: 8px; }
 .mode-cards { grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); }
+
+@media (max-width: 1279px) { .fp-dock .mini-cal { display: none; } }
