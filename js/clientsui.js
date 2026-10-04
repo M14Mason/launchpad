@@ -69,7 +69,7 @@ function renderClients() {
             .map((c) => {
               const missing = Clients.fields(c).filter((f) => !c.collected[f.key] && !/^when-|^min-/.test(f.key)).length;
               return `<a class="card client-card" href="#client/${c.id}">
-              <div class="spread"><div class="row"><span class="ch-dot sm" style="--c1:${Clients.persona(c).colors[0]};--c2:${Clients.persona(c).colors[1]};--c3:${Clients.persona(c).colors[2]}"></span><div><div class="row-title">${esc(c.first)} ${esc(c.last)}</div><div class="small muted">${c.age} · ${esc(c.job)} · ${DIFF_LABEL[c.difficulty]}</div></div></div><span class="pill stage-${c.stage}">${STAGES.find(([k]) => k === c.stage)[1]}</span></div>
+              <div class="spread"><div class="row"><span class="ch-dot sm" style="--c1:${Clients.persona(c).colors[0]};--c2:${Clients.persona(c).colors[1]};--c3:${Clients.persona(c).colors[2]}"></span><div><div class="row-title">${esc(c.first)} ${esc(c.last)}</div><div class="small muted">${c.age} · ${esc(c.job)} · ${DIFF_LABEL[c.difficulty]}</div></div></div><span class="pill stage-${c.stage}">${(STAGES.find(([k]) => k === c.stage)?.[1] || (c.stage === "lost" ? "Left" : c.stage))}</span></div>
               ${relBar(c)}
               <div class="small muted">${Clients.dateOf(c)} · ${c.meetings.length} meeting${c.meetings.length === 1 ? "" : "s"} · ${missing ? missing + " facts still unknown" : "discovery complete"}${c.plan?.grade ? ` · plan ${c.plan.grade.total}/100` : ""}</div></a>`;
             })
@@ -128,7 +128,7 @@ function renderClient(arg) {
   const cur = steps.findIndex((s) => !s.done);
   const others = Clients.all().filter((x) => x.id !== c.id);
   app.innerHTML = `
-    <div class="cl-topbar"><a class="back" href="#fp">‹ Financial planning</a>${others.length ? `<select id="cl-switch" aria-label="Switch client"><option value="">Switch client…</option>${others.map((x) => `<option value="${x.id}">${esc(x.first + " " + x.last)} · ${STAGES.find(([k]) => k === x.stage)[1]}</option>`).join("")}</select>` : ""}</div>
+    <div class="cl-topbar"><a class="back" href="#fp">‹ Financial planning</a>${others.length ? `<select id="cl-switch" aria-label="Switch client"><option value="">Switch client…</option>${others.map((x) => `<option value="${x.id}">${esc(x.first + " " + x.last)} · ${(STAGES.find(([k]) => k === x.stage)?.[1] || (x.stage === "lost" ? "Left" : x.stage))}</option>`).join("")}</select>` : ""}</div>
     <div class="client-head card">
       <div class="orb-host client-orb" id="cl-orb"></div>
       <div class="grow"><div class="eyebrow">${esc(c.job)} · ${esc(c.city)} · ${DIFF_LABEL[c.difficulty]}${c.style ? " · " + esc(c.style) + " personality" : ""}</div><h1>${esc(c.first)} ${esc(c.last)}</h1>
@@ -173,6 +173,7 @@ function nextStepHTML(c, type) {
     ${today ? (noPlan ? `<button class="btn block" id="cl-meet" data-warn="1">${icon("mic")} Meet anyway (as a follow-up)</button>` : `<button class="btn primary block" id="cl-meet">${icon("mic")} Start ${label}</button>`) : `<button class="btn ${noPlan ? "" : "primary"} block" id="cl-skip">${icon("calendar")} Skip to ${FP.fmtDate(b, n.day, { weekday: "short", month: "short", day: "numeric" })}</button>`}
     <button class="btn block" id="cl-move">${icon("calendar")} Reschedule</button>
     ${type === "followup" && !today && FP.roomOn(b, b.day) >= FP.LOAD.followup ? `<button class="btn block" id="cl-quick">${icon("message")} Quick follow-up call today</button>` : ""}
+    ${c.meetings.length ? `<button class="btn block ${c.hardTopic ? "warn-btn" : ""}" id="cl-hard">${icon("alert")} ${c.hardTopic ? "They need a difficult conversation" : "Difficult conversation…"}</button>` : ""}
     ${docsBtn}`;
 }
 
@@ -227,6 +228,27 @@ function wireNextStep(c, type) {
       toMode();
       fpStartMeeting(Clients.find(c.id), Clients.meetingType(Clients.find(c.id)));
     };
+  document.getElementById("cl-hard")?.addEventListener("click", () => {
+    const H = Clients.HARD;
+    const room = FP.roomOn(b, b.day);
+    fpModal(
+      `<h2>Difficult conversation with ${esc(c.first)}</h2><p class="small muted">Real planners have these: honest, kind, and with real numbers. Takes ${FP.LOAD.hard} hours of today (${room >= FP.LOAD.hard ? `${room} free` : "you don't have room today — skip to tomorrow first"}).</p>
+      <div class="hard-list">${Object.entries(H)
+        .filter(([, h]) => h.when(c))
+        .map(([k, h]) => `<button class="btn block ${c.hardTopic === k ? "primary" : ""}" data-hard="${k}" ${room >= FP.LOAD.hard ? "" : "disabled"}>${esc(h.label)}${c.hardTopic === k ? " — recommended" : ""}</button>`)
+        .join("")}</div>`,
+      (el, close) =>
+        el.querySelectorAll("[data-hard]").forEach(
+          (btn) =>
+            (btn.onclick = () => {
+              close();
+              toMode();
+              Clients.update(c.id, (x) => delete x.hardTopic);
+              fpStartMeeting(Clients.find(c.id), "hard", { topic: btn.dataset.hard });
+            })
+        )
+    );
+  });
   document.getElementById("cl-quick")?.addEventListener("click", () => {
     toMode();
     fpStartMeeting(Clients.find(c.id), "followup");

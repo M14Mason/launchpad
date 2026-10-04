@@ -49,7 +49,7 @@ const FP = (() => {
   const pick = (r, a) => a[Math.floor(r() * a.length)];
 
   // ---------- your day: room for about 2-3 meetings (bigger meetings take more of it) ----------
-  const LOAD = { discovery: 2.5, presentation: 2.5, review: 2, followup: 1.5, call: 0.5 };
+  const LOAD = { discovery: 2.5, presentation: 2.5, review: 2, followup: 1.5, call: 0.5, hard: 2 };
   const CAP = 6;
   const loadOf = (type) => LOAD[type] ?? 1.5;
   const isWeekday = (b, day) => {
@@ -395,6 +395,7 @@ const FP = (() => {
           });
         }
       if (mode === "career") careerDay(b, r, clients);
+      if (typeof FPBiz !== "undefined") FPBiz.day(b, r, clientsIn(mode), today, open);
       // Your team at work.
       if (b.hires?.associate)
         for (const m of b.inbox)
@@ -462,10 +463,11 @@ const FP = (() => {
       b.q = { start: b.day, aum0: b.aum, clients0: clients.length, missed: 0 };
     }
     if (b.day >= b.nextLead) {
-      b.nextLead = b.day + 16 + Math.floor(r() * 12);
-      const lead = { seed: Math.floor(r() * 1e9), wealth: Math.min(4, b.role + (r() < 0.3 ? 1 : 0)), difficulty: b.role < 1 ? (r() < 0.6 ? "easy" : "realistic") : b.role < 3 ? (r() < 0.7 ? "realistic" : "tough") : r() < 0.5 ? "realistic" : "tough" };
+      const rep = b.rep ?? 55;
+      b.nextLead = b.day + Math.max(6, Math.round((16 + Math.floor(r() * 12)) * (1.45 - rep / 100) * (b.firm ? 0.7 : 1)));
+      const lead = { seed: Math.floor(r() * 1e9), wealth: Math.min(4, b.role + (r() < 0.3 ? 1 : 0) + (rep >= 75 || b.firm ? 1 : 0)), difficulty: b.role < 1 ? (r() < 0.6 ? "easy" : "realistic") : b.role < 3 ? (r() < 0.7 ? "realistic" : "tough") : r() < 0.5 ? "realistic" : "tough" };
       const preview = Clients.generate(lead.difficulty, lead.seed, { book: "career", wealth: lead.wealth });
-      push(b, { app: "messages", from: TEAM.manager, body: `New lead for you: ${preview.first} ${preview.last}, ${preview.age}, ${preview.job}. ${preview.reason[0].toUpperCase() + preview.reason.slice(1)}. ${lead.wealth >= 2 ? "Significant assets — handle with care." : ""} Want them?`, kind: "lead", lead });
+      push(b, { app: "messages", from: b.firm ? "Your office manager" : TEAM.manager, body: `${b.firm ? "Someone found us online — " : ""}New lead for you: ${preview.first} ${preview.last}, ${preview.age}, ${preview.job}. ${preview.reason[0].toUpperCase() + preview.reason.slice(1)}. ${lead.wealth >= 2 ? "Significant assets — handle with care." : ""} Want them?`, kind: "lead", lead });
     }
     if (b.day % 30 === 0 && b.day > 0) push(b, { app: "messages", from: TEAM.manager, body: `Monthly check-in: you manage ${Clients.usd(b.aum)} across ${clients.length} client${clients.length === 1 ? "" : "s"} and have earned ${Clients.usd(b.revenue)} in fees so far. ${clients.some((c) => c.relationship < 35) ? "Some relationships need attention." : "Keep it up."}`, kind: "update" });
     if (b.day >= b.nextAudit) {
@@ -508,14 +510,15 @@ const FP = (() => {
     b.held[b.day] = (b.held[b.day] || 0) + loadOf(type);
     if (c.meetings.length) c.meetings[c.meetings.length - 1].day = b.day;
     b.week ||= { held: 0, missed: 0, replies: 0, calls: 0 };
-    if (type === "call") {
-      b.week.calls++;
+    if (type === "call" || type === "hard") {
+      if (type === "call") b.week.calls++;
+      else b.week.held++;
       const call = (b.calls || []).find((x) => x.clientId === c.id && !["done", "ignored"].includes(x.status));
       if (call) call.status = "done";
     } else b.week.held++;
     const wasPresentation = c.next?.type === "presentation" && c.next.day <= b.day && !c.next.missed;
-    if (type === "call") {
-      // Calls don't change the schedule.
+    if (type === "call" || type === "hard") {
+      // Calls and difficult conversations don't change the schedule.
     } else if (type === "followup" && wasPresentation && !c.plan?.submittedAt) {
       // They came for the plan and you didn't have one.
       c.relationship = Math.max(0, c.relationship - 5);
@@ -526,7 +529,7 @@ const FP = (() => {
       // Keep the presentation that's already booked.
     } else if (type === "discovery" || type === "followup") schedule(c, "presentation", b.day + 14);
     else schedule(c, "review", b.day + 91, { annual: reviews % 4 === 3 });
-    if (type !== "call" && c.next && !c.next.missed) push(b, { app: "messages", from: TEAM.assistant, clientId: c.id, body: `Booked ${c.first}'s ${Clients.MEETING_NAME[c.next.type].toLowerCase()} for ${fmtDate(b, c.next.day, { weekday: "long", month: "short", day: "numeric" })}.`, kind: "reminder", read: true });
+    if (type !== "call" && type !== "hard" && c.next && !c.next.missed) push(b, { app: "messages", from: TEAM.assistant, clientId: c.id, body: `Booked ${c.first}'s ${Clients.MEETING_NAME[c.next.type].toLowerCase()} for ${fmtDate(b, c.next.day, { weekday: "long", month: "short", day: "numeric" })}.`, kind: "reminder", read: true });
     // Manager feedback after real meetings.
     if (type !== "call" && Math.random() < 0.5) push(b, { app: "messages", from: TEAM.manager, clientId: c.id, body: score >= 75 ? `Heard the ${Clients.MEETING_NAME[type].toLowerCase()} with ${c.first} went really well. Nice work.` : score >= 55 ? `Solid ${Clients.MEETING_NAME[type].toLowerCase()} with ${c.first}. Next time, slow down and summarize what you heard before moving on.` : `Let's debrief the ${c.first} meeting. Remember: listen more, ask open questions, and tie every step back to their goals.`, kind: "update" });
     setBook(b);
@@ -554,6 +557,8 @@ const FP = (() => {
     if (/\b(guarantee|can't lose|definitely (go|going) up|risk.?free|sure thing)\b/.test(t)) (s -= 2, notes.push("✗ Never promise returns or guarantees"));
     if (msg.kind === "tip" && /\b(yes,? (buy|go for it)|you should buy|definitely buy|put it all)\b/.test(t)) (s -= 2, notes.push("✗ Don't give hot-stock/crypto tips — tie it back to their plan"));
     if (msg.kind === "tip" && /\b(plan|diversif|goals?|risk|small (amount|portion)|speculat)\b/.test(t)) (s++, notes.push("✓ Brought it back to their plan"));
+    const biz = typeof FPBiz !== "undefined" ? FPBiz.score(msg, t) : null;
+    if (biz) return biz;
     if (msg.kind === "scam") {
       const protect = /\b(scam|fraud|don'?t (pay|send|click|share|give|move|log)|do not|never|verify|official|hang up|real (irs|bank)|call (your|the) bank|gift cards?|too good to be true|red flag)\b/.test(t);
       const fell = /\b(go ahead|pay (it|them)|send (it|them)|sounds (legit|good|great)|do it|sure,? (pay|send))\b/.test(t) && !protect;
@@ -597,6 +602,7 @@ const FP = (() => {
     m.reply = { text, day: b.day, ...res };
     b.week ||= { held: 0, missed: 0, replies: 0, calls: 0 };
     b.week.replies++;
+    if (typeof FPBiz !== "undefined") FPBiz.onReply(b, m, res);
     if (res.fell && m.clientId)
       Clients.update(m.clientId, (c) => {
         c.truth.cash = Math.max(0, c.truth.cash - 4000);
@@ -686,11 +692,23 @@ function renderFPMode() {
       <div class="eyebrow">Financial planning</div><h1>How do you want to play?</h1>
       <div class="grid cards2 mode-cards">
         <button class="card mode-card" data-fpmode="career"><div class="track-icon big">${icon("trend")}</div><h2>Career mode</h2><p class="muted">Start as a Junior Associate with two clients. Win leads, keep clients happy, grow your assets under management, pass licensing exams and climb to Partner.</p>${s.books.career ? `<span class="pill">${FP.ROLES[s.books.career.role || 0].name} · ${Clients.usd(s.books.career.aum || 0)} AUM</span>` : `<span class="pill">New career</span>`}</button>
+        <button class="card mode-card" data-fpmode="firm"><div class="track-icon big">${icon("briefcase")}</div><h2>Wealth management firm</h2><p class="muted">Skip ahead: you've bought out a retiring planner and run your own firm — wealthy inherited clients, staff, rent, reputation, rivals and lawsuits.</p><span class="pill">${s.books.career?.firm ? esc(s.books.career.firm.name) : "Starts a new career save"}</span></button>
         <button class="card mode-card" data-fpmode="practice"><div class="track-icon big">${icon("target")}</div><h2>Practice mode</h2><p class="muted">Create any client you want, any difficulty, and practice meetings and plans at your own pace — no pressure.</p><span class="pill">${FP.clientsIn("practice").length} client${FP.clientsIn("practice").length === 1 ? "" : "s"}</span></button>
       </div>
       <p class="small muted">Both modes have the same meetings, tools, calendar and phone. Career mode adds roles, assets under management, leads, audits and promotions.</p></div>`;
   app.querySelectorAll("[data-fpmode]").forEach((b) =>
     b.addEventListener("click", () => {
+      if (b.dataset.fpmode === "firm") {
+        const st0 = FP.state();
+        if (st0.books.career?.firm) {
+          st0.mode = "career";
+          FP.save(st0);
+          return go("fp");
+        }
+        if (st0.books.career && !confirm("This replaces your current career save (and its clients) with a new wealth-management firm. Continue?")) return;
+        FPBiz.startFirm();
+        return go("fp");
+      }
       const st = FP.state();
       st.mode = b.dataset.fpmode;
       FP.save(st);

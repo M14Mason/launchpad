@@ -1318,3 +1318,23 @@ label.check input { margin-top: 3px; }
 .dec-out li { margin: 4px 0; }
 .client-next { display: flex; flex-direction: column; gap: 8px; }
 .client-next .btn.block { margin: 0; }
+
+/* ---------- business: reputation, cases, paperwork, difficult conversations ---------- */
+.rv { padding: 8px 0; border-bottom: 1px solid var(--border); }
+.rv:last-child { border-bottom: 0; }
+.rv p { margin: 4px 0 0; }
+.rv-stars { color: #f59e0b; letter-spacing: 1px; }
+.case-closed { padding: 6px 0; }
+.fp-home .task + .task, .fp-home .task + .case-closed { margin-top: 8px; }
+.pw-form { display: flex; flex-direction: column; border: 1px solid var(--border); border-radius: var(--r-sm); overflow: hidden; margin: 12px 0; }
+.pw-row { display: grid; grid-template-columns: 150px 1fr auto; gap: 10px; align-items: center; padding: 9px 12px; border-bottom: 1px solid var(--border); cursor: pointer; }
+.pw-row:last-child { border-bottom: 0; }
+.pw-row:has(input:checked) { background: var(--bad-soft); }
+.pw-k { font-size: 12.5px; color: var(--muted); }
+.pw-v { font-weight: 500; overflow-wrap: anywhere; }
+.pw-flag { display: flex; gap: 6px; align-items: center; font-size: 12.5px; color: var(--bad); }
+@media (max-width: 520px) { .pw-row { grid-template-columns: 1fr auto; } .pw-k { grid-column: 1 / -1; } }
+.hard-list { display: flex; flex-direction: column; gap: 8px; margin-top: 12px; }
+.warn-btn { border-color: var(--warn); color: var(--warn); }
+.fp-modal textarea { width: 100%; margin-top: 8px; }
+.mode-cards { grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); }

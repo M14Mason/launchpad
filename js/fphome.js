@@ -112,7 +112,12 @@ function fpTasks(b, list) {
   }
   for (const c of list.filter((c) => c.next && !c.next.missed && c.next.type === "presentation" && !c.plan?.submittedAt && c.next.day > b.day && c.next.day - b.day <= 7))
     tasks.push({ tone: "warn", icon: "pen", title: `Build ${c.first}'s plan`, sub: `Presentation on ${FP.fmtDate(b, c.next.day)}.`, actions: [{ label: "Build the plan", primary: true, run: () => go(`client/${c.id}/plan`) }] });
-  const mail = b.inbox.filter((m) => m.app === "mail" && m.needsReply && !m.replied && !m.waiting && !m.ignored);
+  for (const k of (b.cases || []).filter((x) => x.status === "open")) tasks.push({ tone: "bad", icon: "shield", title: k.title, sub: `Respond by ${FP.fmtDate(b, k.due)} — or it gets worse.`, actions: [{ label: "Respond", primary: true, run: () => fpCaseModal(k) }] });
+  for (const m of b.inbox.filter((x) => x.kind === "poach" && !x.replied && !x.poachDone)) tasks.push({ tone: "bad", icon: "users", title: `${m.rival} is courting ${m.from}`, sub: `Reply by ${FP.fmtDate(b, m.poachDue)} or they'll leave.`, actions: [{ label: "Reply", primary: true, run: () => fpOpenPhone("mail", m.id) }] });
+  for (const c of list.filter((c) => c.stage === "client" && !c.paperwork?.done)) tasks.push({ tone: "today", icon: "file", title: `Paperwork: open ${c.first}'s accounts`, sub: c.paperwork?.tries ? "It came back with errors — fix and resubmit." : "They said yes! Check the forms before submitting.", actions: [{ label: "Check forms", primary: true, run: () => fpPaperworkModal(c) }] });
+  const hrAsk = b.inbox.filter((m) => m.kind === "hr" && m.needsReply && !m.replied);
+  if (hrAsk.length) tasks.push({ tone: "warn", icon: "message", title: `Your ${hrAsk[0].from.toLowerCase()} needs you`, sub: hrAsk[0].body, actions: [{ label: "Reply", primary: true, run: () => fpOpenPhone("messages", hrAsk[0].id) }] });
+  const mail = b.inbox.filter((m) => m.app === "mail" && m.needsReply && !m.replied && !m.waiting && !m.ignored && m.kind !== "poach");
   if (mail.length) tasks.push({ tone: "warn", icon: "mail", title: `${mail.length} client email${mail.length === 1 ? "" : "s"} waiting`, sub: mail.slice(0, 2).map((m) => `${m.from}: ${m.subject || m.body}`).join(" · "), actions: [{ label: "Open Mail", primary: true, run: () => fpOpenPhone("mail") }] });
   const leads = b.inbox.filter((m) => m.lead && !m.accepted);
   if (leads.length) tasks.push({ tone: "good", icon: "users", title: `${leads.length} new lead${leads.length === 1 ? "" : "s"}`, sub: "Someone wants to work with you.", actions: [{ label: "See leads", primary: true, run: () => fpOpenPhone(leads[0].app, leads[0].id) }] });
@@ -200,7 +205,7 @@ function renderFP(arg = "") {
   const shown = list.filter((c) => FPCal.stage === "all" || c.stage === FPCal.stage);
   const hist = (s.examHistory || []).slice(-6).reverse();
   app.innerHTML = `<div class="fp-home">
-    <div class="page-head"><div><div class="eyebrow">${mode === "career" ? `Career mode · ${role.name}` : "Practice mode"}</div><h1>Financial planning</h1><p class="muted">${mode === "career" ? "You're a planner at a firm. Grow your book, keep clients happy, pass your exams and get promoted." : "Practice with as many clients as you like, on a realistic calendar."}</p></div>
+    <div class="page-head"><div><div class="eyebrow">${mode === "career" ? (b.firm ? `Founder · ${esc(b.firm.name)}` : `Career mode · ${role.name}`) : "Practice mode"}</div><h1>Financial planning</h1><p class="muted">${mode === "career" ? (b.firm ? "Your own wealth management firm. Wealthy clients, staff, rent, reputation — and rivals." : "You're a planner at a firm. New clients come to you through leads, referrals and your reputation — keep them happy and get promoted.") : "Practice with as many clients as you like, on a realistic calendar."}</p></div>
       <div class="row wrap-gap"><a class="btn" href="#fp/mode">${icon("refresh")} Switch mode</a>${mode === "practice" ? `<select id="fp-diff" aria-label="Client difficulty">${Object.entries(DIFF_LABEL).map(([v, l]) => `<option value="${v}" ${v === "realistic" ? "selected" : ""}>${l} client</option>`).join("")}</select><button class="btn primary" id="fp-new">${icon("plus")} New client</button>` : ""}</div></div>
 
     <section class="card fp-today"><div class="section-head"><h2>Do this now</h2><span class="small muted">${FP.fmtDate(b, b.day, { weekday: "long", month: "long", day: "numeric" })}</span></div>
@@ -217,13 +222,13 @@ function renderFP(arg = "") {
     ${
       mode === "career"
         ? `<div class="stats">
-      <div class="card stat"><div class="k">Role</div><div class="stat-v sm">${role.name}</div>${next ? `<div class="small muted">Next: ${next.name} at ${Clients.usd(next.aum)}${next.exam ? ` + ${next.exam.toUpperCase()} exam` : ""}</div><div class="bar"><i style="width:${Math.min(100, (b.aum / next.aum) * 100)}%"></i></div>` : `<div class="small muted">Top of the firm</div>`}</div>
+      <div class="card stat"><div class="k">Role</div><div class="stat-v sm">${b.firm ? "Founder" : role.name}</div>${b.firm ? `<div class="small muted">${esc(b.firm.name)}</div>` : next ? `<div class="small muted">Next: ${next.name} at ${Clients.usd(next.aum)}${next.exam ? ` + ${next.exam.toUpperCase()} exam` : ""}</div><div class="bar"><i style="width:${Math.min(100, (b.aum / next.aum) * 100)}%"></i></div>` : `<div class="small muted">Top of the firm</div>`}</div>
       <div class="card stat"><div class="k">Assets you manage</div><div class="stat-v">${Clients.usd(b.aum || 0)}</div><div class="small muted">Moves with the market</div></div>
       <div class="card stat"><div class="k">Fees earned</div><div class="stat-v">${Clients.usd(b.revenue || 0)}</div><div class="small muted">1% of assets a year${b.bonus ? ` · bonuses ${Clients.usd(b.bonus)}` : ""}</div></div>
       <div class="card stat"><div class="k">Experience</div><div class="stat-v">${b.xp || 0}<span class="muted"> XP</span></div><div class="small muted">Meetings, replies, clean audits</div></div></div>
     <div class="two-col">
       <section class="card"><div class="section-head"><h2>This quarter</h2><span class="small muted">Day ${b.day - (b.q?.start ?? b.day) + 1} of 91</span></div>${FP.qGoals(b, list).map((g) => `<div class="qg ${g.done ? "done" : ""}"><span>${g.done ? icon("check") : ""}</span><div class="grow small">${esc(g.label)}<div class="bar"><i style="width:${g.pct}%"></i></div></div></div>`).join("")}<p class="small muted">Each goal you hit pays a bonus at quarter end.</p></section>
-      <section class="card"><h2>Team leaderboard</h2><div class="lb">${[...(b.peers || []).map((p) => ({ name: p.name, aum: p.aum })), { name: "You", aum: b.aum || 0, me: true }]
+      <section class="card"><h2>${b.firm ? "Local firms by assets" : "Team leaderboard"}</h2><div class="lb">${[...(b.peers || []).map((p, i) => (b.firm ? { name: FPBiz.RIVALS[i], aum: p.aum * 14 } : { name: p.name, aum: p.aum })), { name: b.firm ? b.firm.name + " (you)" : "You", aum: b.aum || 0, me: true }]
         .sort((x, z) => z.aum - x.aum)
         .map((p, i) => `<div class="lb-row ${p.me ? "me" : ""}"><span class="lb-rank">${i + 1}</span><span class="grow">${esc(p.name)}</span><strong>${Clients.usd(p.aum)}</strong></div>`)
         .join("")}</div></section>
@@ -237,6 +242,8 @@ function renderFP(arg = "") {
       .join("")}</div></section>`
         : ""
     }
+
+    ${mode === "career" || (b.cases || []).length || (b.reviews || []).length ? fpBizHTML(b, mode) : ""}
 
     <section class="card"><div class="section-head"><h2>Your clients</h2><div class="chips">${stages.map(([k, l]) => `<button class="chip ${FPCal.stage === k ? "on" : ""}" data-stage="${k}">${l} <span>${k === "all" ? list.length : list.filter((c) => c.stage === k).length}</span></button>`).join("")}</div></div>
       ${
@@ -282,6 +289,24 @@ function renderFP(arg = "") {
   });
   app.querySelector('[data-sel="move"]')?.addEventListener("click", () => pickReschedule(Clients.find(FPCal.sel)));
   app.querySelectorAll("[data-stage]").forEach((btn) => btn.addEventListener("click", () => ((FPCal.stage = btn.dataset.stage), (route.keepScroll = true), route())));
+  app.querySelectorAll("[data-case]").forEach((btn) => btn.addEventListener("click", () => fpCaseModal((b.cases || []).find((k) => k.id === btn.dataset.case))));
+  app.querySelectorAll("[data-office]").forEach((btn) =>
+    btn.addEventListener("click", () => {
+      const o = FPBiz.OFFICES[+btn.dataset.office];
+      if (!confirm(`Move into a ${o.name.toLowerCase()} for ${Clients.usd(o.cost)}?`)) return;
+      FPBiz.buyOffice(+btn.dataset.office);
+      route.keepScroll = true;
+      route();
+    })
+  );
+  document.getElementById("fp-firm")?.addEventListener("click", () => {
+    const name = prompt("Name your firm:", "Ngo Wealth Management");
+    if (!name) return;
+    FPBiz.openFirm(name.trim().slice(0, 40));
+    toast(`${name} is open for business!`);
+    route.keepScroll = true;
+    route();
+  });
   app.querySelectorAll("[data-hire]").forEach((btn) =>
     btn.addEventListener("click", () => {
       const h = FP.HIRES[btn.dataset.hire];

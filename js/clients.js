@@ -564,7 +564,7 @@ const Clients = (() => {
     { id: "baby", w: 4, cond: (c) => c.age < 43 && (c.married || c.partner), text: (c) => `${c.first} is expecting a baby.`, say: () => `We're having a baby!! Due in about seven months. What do we need to change?`, apply: (c) => { c.truth.living += 950; c.kids.push({ name: "Baby", age: 0 }); addGoal(c, "college-baby", "New baby's college fund", 150000, 18); } },
     { id: "engaged", w: 3, cond: (c) => !c.married && c.age < 45, text: (c) => `${c.first} got engaged.`, say: () => `I got engaged! We're thinking about a wedding next year — maybe $30,000?`, apply: (c) => addGoal(c, "wedding", "Pay for their wedding", 30000, 1, "We're planning the wedding — about {amt} — next year.") },
     { id: "married", w: 2, cond: (c) => c.household === "partner", text: (c) => `${c.first} and ${c.partner} got married.`, say: (c) => `${c.partner} and I got married! Do we combine finances now?`, apply: (c) => { c.married = true; c.household = "married"; } },
-    { id: "divorce", w: 2, cond: (c) => c.married, text: (c) => `${c.first} is going through a divorce.`, say: () => `This is hard to write. We're getting divorced. I don't know what this means for money.`, apply: (c) => { c.married = false; c.household = "divorced"; c.truth.cash = Math.round(c.truth.cash / 2); c.truth.k401 = Math.round(c.truth.k401 * 0.6); c.truth.housing = Math.round(c.truth.housing * 0.8); } },
+    { id: "divorce", w: 2, cond: (c) => c.married, text: (c) => `${c.first} is going through a divorce.`, say: () => `This is hard to write. We're getting divorced. I don't know what this means for money.`, apply: (c) => { c.hardTopic = "divorce"; c.married = false; c.household = "divorced"; c.truth.cash = Math.round(c.truth.cash / 2); c.truth.k401 = Math.round(c.truth.k401 * 0.6); c.truth.housing = Math.round(c.truth.housing * 0.8); } },
     { id: "parentcare", w: 3, cond: (c) => c.age > 38, text: (c) => `${c.first}'s parent needs care.`, say: () => `My dad fell and needs help at home now. We're paying for an aide a few days a week.`, apply: (c) => (c.truth.living += 900) },
     { id: "parentmove", w: 2, cond: (c) => c.age > 40, text: (c) => `${c.first}'s mother is moving in.`, say: () => `My mom is moving in with us. It'll help her, but our grocery bill is about to go up.`, apply: (c) => (c.truth.living += 400) },
     { id: "inherit", w: 2, text: (c, e) => `${c.first} inherited $${e.n.toLocaleString()}.`, say: (c, e) => `My aunt passed away and left me $${e.n.toLocaleString()}. I don't want to waste it.`, n: (r) => Math.round((10000 + r() * 90000) / 1000) * 1000, apply: (c, e) => (c.truth.cash += e.n) },
@@ -620,6 +620,7 @@ const Clients = (() => {
         e.text = `${c.first} has a new goal: ${g.name.toLowerCase()}.`;
         e.say = `I've been thinking about something new — ${g.say.replace("{amt}", "$" + goal.target.toLocaleString()).replace("{yrs}", goal.years).replace(/^./, (x) => x.toLowerCase())}`;
       } },
+    { id: "parentpassed", w: 1, cond: (c) => c.age < 60, text: (c) => `${c.first}'s parent passed away.`, say: () => `I wanted to let you know my mom passed away last week. I'm okay… mostly. There's an estate to deal with and I don't know where to start.`, apply: (c) => { c.hardTopic = "loss"; } },
     { id: "dec-buyrent", w: 3, decision: "buyrent", cond: (c) => !c.truth.owns, text: (c) => `${c.first} is deciding whether to buy a home or keep renting.`, say: (c, e) => `We found a place we love — about $${(e.n * 1000).toLocaleString()}. Should we buy it or keep renting? I need your honest take.`, n: (r, c) => Math.round((c.income * (3.2 + r() * 1.6)) / 10000) * 10, apply: () => {} },
     { id: "dec-job", w: 3, decision: "job", text: (c) => `${c.first} got a job offer and wants help deciding.`, say: (c, e) => `I got an offer for $${(e.n * 1000).toLocaleString()} a year — more than I make now — but there's no 401(k) match and the health plan is worse. Should I take it?`, n: (r, c) => Math.round((c.income * (1.06 + r() * 0.12)) / 1000), apply: () => {} },
     { id: "dec-lend", w: 3, decision: "lend", text: (c) => `${c.first} was asked to lend family money.`, say: (c, e) => `My brother asked to borrow $${(e.n * 1000).toLocaleString()} to cover some bills. I want to help, but I'm torn. What would you do?`, n: (r) => 3 + Math.floor(r() * 10), apply: () => {} },
@@ -742,7 +743,14 @@ const Clients = (() => {
     if (!c.meetings.some((m) => m.type === "presentation")) return "presentation";
     return "review";
   }
-  const MEETING_NAME = { discovery: "Discovery meeting", followup: "Follow-up call", presentation: "Plan presentation", review: "Review meeting", call: "Phone call" };
+  const MEETING_NAME = { discovery: "Discovery meeting", followup: "Follow-up call", presentation: "Plan presentation", review: "Review meeting", call: "Phone call", hard: "Difficult conversation" };
+  const HARD = {
+    afford: { label: "Their goal isn't affordable", when: () => true, open: (c) => `Hi Mason. You said you wanted to talk about something? You sounded serious.`, notes: (c) => `Mason has to tell you that one of your goals isn't affordable as planned. You REALLY want it. React honestly: disappointment, maybe denial ("there must be a way"). If he explains with real numbers and offers real options (more time, a smaller target, saving more, cutting something), you slowly accept and pick one.`, brief: (c) => `Tell ${c.first} that one of their goals doesn't fit their budget. Be kind, use real numbers, and offer options.` },
+    overspend: { label: "Their spending is the problem", when: () => true, open: (c) => `Hey Mason. So… what did you want to talk about?`, notes: (c) => `Mason needs to tell you your spending is the main problem. You get a little defensive at first ("I don't spend THAT much"). If he's non-judgmental, shows the numbers and suggests specific, realistic cuts, you open up and agree to try.`, brief: (c) => `${c.first} spends more than their plan can handle. Raise it without judging, show the numbers, and agree on 2-3 realistic changes.` },
+    loss: { label: "A death in the family", when: (c) => true, open: (c) => `Hi Mason. Thanks for making time. It's… been a hard few weeks. My ${c.age > 55 ? "husband" : "mom"} passed away.`, notes: (c) => `Someone close to you (${c.age > 55 ? "your spouse" : "your mother"}) died recently. You're grieving, foggy and overwhelmed by paperwork. You might be tempted to make big money decisions (sell the house, pay everything off). A good planner slows you down: compassion first, no big decisions for 6-12 months, handle beneficiary claims and urgent paperwork, update your own beneficiaries.`, brief: (c) => `${c.first} just lost someone close. Lead with compassion, keep decisions small, and help with the urgent paperwork.` },
+    divorce: { label: "Splitting assets in a divorce", when: (c) => c.married || c.household === "divorced", open: (c) => `Hi. I guess you heard. The divorce is moving forward and I have no idea what happens to our money.`, notes: (c) => `You're going through a divorce: angry, scared and worried about money. You need help understanding how retirement accounts get split (a QDRO), building a new single-income budget, updating beneficiaries, and not making rushed decisions. You may vent about your ex — a good planner stays neutral.`, brief: (c) => `${c.first} is divorcing. Stay neutral, explain how assets get split, build a new budget, and update beneficiaries.` },
+    losses: { label: "Big market losses", when: () => true, open: (c) => `Mason, I'm going to be honest. I'm scared. I've lost a lot this year and I want to sell everything.`, notes: (c) => `Your investments dropped a lot and you want to sell everything and go to cash. You're emotional. If Mason listens first, explains with history and your timeline, and maybe offers a small comfort step (like rebalancing or building cash), you calm down and stay invested. If he dismisses you, you get more upset.`, brief: (c) => `${c.first} wants to sell everything after losses. Listen first, then use their timeline and history to keep them on track.` },
+  };
 
   // ---------- meeting extras: moods, family guests, market news ----------
   const MOODS = [
@@ -882,6 +890,8 @@ ${past ? "Earlier meetings: " + past : ""} Relationship with Mason so far: ${c.r
 ${opts.mood ? `TODAY'S MOOD: you're ${opts.mood.say}. Let it show naturally in how you talk (don't announce it in your first line). If Mason notices and acknowledges it kindly, warm up a bit.` : ""}
 ${opts.guest ? `GUEST: your ${opts.guest.rel} ${opts.guest.name} came along today. You play BOTH people. ${opts.guest.name} ${opts.guest.view}. Start each person's line with their name in brackets, like [${c.first}] ... [${opts.guest.name}] ... ${opts.guest.name} speaks in some turns with their own questions and opinions; if Mason ignores them, they get annoyed.` : ""}
 ${opts.news ? `MARKET NEWS: you saw the headline "${opts.news.head}". Once, partway through (not in your first reply), ask Mason what it means for you and whether you should do anything.` : ""}
+${type === "hard" && HARD[opts.topic] ? `DIFFICULT CONVERSATION: ${HARD[opts.topic].notes(c)}` : ""}
+${opts.interrupt ? `INTERRUPTION: once, around the middle of the meeting, ${opts.interrupt}. Then see whether Mason handles it gracefully and steers back.` : ""}
 ${type === "call" ? `This is a PHONE CALL you made to Mason because: "${opts.reason || "you had a quick question"}". Start with that. Keep it short (a few minutes). Once you have a clear answer and a next step, thank him and say goodbye.` : ""}
 ${type === "email" ? "You're emailing your planner between meetings. Only mention money details if they're relevant to the email." : type === "presentation" ? "Mason is presenting his financial plan today. Ask about anything unclear, push back if it doesn't fit you, and decide whether you'll follow it." : type === "review" ? "This is a follow-up review. Share updates and ask how you're doing on your goals." : type === "followup" ? "This is a short follow-up call. You already met once; Mason needs a few more details for your plan. Answer what he asks." : "This is your first meeting (discovery). Share details only when asked."}`;
   }
@@ -891,7 +901,14 @@ ${type === "email" ? "You're emailing your planner between meetings. Only mentio
     const mood = opts.mood !== undefined ? opts.mood : type === "call" || mr() < 0.35 ? null : MOODS[Math.floor(mr() * MOODS.length)];
     const guest = opts.guest !== undefined ? opts.guest : pickGuest(c, type, mr);
     const news = type === "discovery" ? null : marketNews(c);
-    const xo = { mood, guest, news, reason: opts.reason };
+    const INTERRUPTS = [
+      ["your phone rings — it's your boss, you take it for a moment and come back flustered", "Sorry — that's my boss, one second… Okay. Sorry. Where were we?"],
+      [c.kids.length ? `your kid ${c.kids[0].name} bursts in needing something` : "a delivery driver calls about a package", c.kids.length ? `${c.kids[0].name}, not now honey — sorry, Mason. Kids. What were you saying?` : "Sorry, that was a delivery. Go ahead."],
+      ["you go off on a long tangent about your neighbor's new boat and how unfair it is", "Speaking of money — my neighbor just bought a boat. A BOAT. How do people afford that? Anyway…"],
+      ["you get a text and read it out loud, worried, about a family thing", "Sorry, my sister just texted — my dad's car broke down again. Ugh. Okay, I'm listening."],
+    ];
+    const intr = type === "call" || type === "hard" || mr() > 0.35 ? null : INTERRUPTS[Math.floor(mr() * INTERRUPTS.length)];
+    const xo = { mood, guest, news, reason: opts.reason, topic: opts.topic, interrupt: intr?.[0] };
     const refSay = { "a coworker": "A coworker of mine", "a friend from church": "A friend from church", "their sister": "My sister", "their brother": "My brother", "an online search": "I found you online and", "a neighbor": "My neighbor", "their CPA": "My accountant", "a friend from the gym": "A friend from the gym" }[c.referral] || "A friend";
     const worry = worriesNow(c)[0].replace(/^the kids'/, "my kids'").replace(/^taking care of an aging parent/, "taking care of my mom").replace(/^starting over financially after the divorce/, "starting over after my divorce").replace(/^whether their savings/, "whether my savings").replace(/^income that's different/, "my income being different");
     const greet = { brief: `Hi. ${c.first}.`, chatty: `Hi! I'm ${c.first} — sorry, traffic was crazy.`, anxious: `Hi, I'm ${c.first}. Sorry, I'm a little nervous about this.`, skeptical: `Hi, I'm ${c.first}. I'll be honest, I've had a bad experience with a "financial advisor" before.`, detailed: `Hi, I'm ${c.first}. I brought some notes.`, upbeat: `Hey! I'm ${c.first}, great to meet you!`, guarded: `Hi. I'm ${c.first}.` }[c.style] || `Hi, I'm ${c.first}.`;
@@ -900,6 +917,7 @@ ${type === "email" ? "You're emailing your planner between meetings. Only mentio
       followup: `Hi Mason, it's ${c.first}. You said you needed a few more details?`,
       presentation: `Hi Mason, good to see you again. I'm curious what you came up with.`,
       call: `Hi Mason, it's ${c.first}. Do you have a minute? ${opts.reason || "I had a quick question."}`,
+      hard: HARD[opts.topic]?.open(c) || `Hi Mason. You wanted to talk?`,
       review: c.pendingEvents.length ? `Hey Mason. A lot has happened since we last talked — ${c.pendingEvents[0].text.replace(c.first + " has", "I have").replace(c.first + " ", "I ")}` : `Hi Mason, good to see you. Things have been pretty steady.`,
     }[type];
     const moodSay = mood ? { stressed: "Sorry, it's been a really rough week at work.", rushed: "Just so you know, I have to leave a little early today.", excited: "Sorry, I'm a little giddy — I got some great news at work this morning!", tired: "Forgive me, I barely slept last night.", distracted: "Sorry if I seem a little off — family stuff.", skeptical: "I'll be honest, a friend told me advisors are a waste of money." }[mood.id] : "";
@@ -912,7 +930,7 @@ ${type === "email" ? "You're emailing your planner between meetings. Only mentio
       meetingType: type,
       title: `${c.first} ${c.last} · ${MEETING_NAME[type]} · ${dateOf(c)}`,
       counterpart: { name: `${c.first} ${c.last}`, role: `${c.job}, ${c.age}`, gender: c.gender },
-      brief: { call: `${c.first} is calling you: “${opts.reason || "a quick question"}”. Listen, answer clearly and agree on a next step.`, discovery: `${c.first} ${c.reason}. Learn their full situation: cash flow, debts, savings, retirement, goals, risk tolerance and protection — and ask for their documents.`, followup: `A short call to fill the gaps in what you know before you build the plan.`, presentation: `Walk ${c.first} through your plan in plain English. Check it fits them and get their buy-in.`, review: `Catch up on what changed, review progress toward goals, and adjust the plan.` }[type],
+      brief: { hard: HARD[opts.topic]?.brief(c) || "A difficult conversation.", call: `${c.first} is calling you: “${opts.reason || "a quick question"}”. Listen, answer clearly and agree on a next step.`, discovery: `${c.first} ${c.reason}. Learn their full situation: cash flow, debts, savings, retirement, goals, risk tolerance and protection — and ask for their documents.`, followup: `A short call to fill the gaps in what you know before you build the plan.`, presentation: `Walk ${c.first} through your plan in plain English. Check it fits them and get their buy-in.`, review: `Catch up on what changed, review progress toward goals, and adjust the plan.` }[type],
       opening: openingFull,
       hidden: hiddenNotes(c, type, xo),
       opening2: null,
@@ -920,13 +938,15 @@ ${type === "email" ? "You're emailing your planner between meetings. Only mentio
       guest,
       news,
       reason: opts.reason || "",
-      objectives: { call: ["Find out what's behind the question", "Answer simply, tied to their plan", "No guarantees or hot tips", "Agree on a next step"], discovery: ["Build rapport before numbers", "Cover cash flow, debts, savings, retirement, goals, risk", "Ask open questions and listen for new goals", "Ask for documents and agree next steps"], followup: ["Ask only what's missing", "Confirm anything that changed", "Collect outstanding documents", "Set the plan presentation"], presentation: ["Explain the plan without jargon", "Connect each step to their goals", "Check understanding and comfort", "Agree on next steps"], review: ["Ask what changed", "Review goal progress", "Adjust the plan", "Remember personal details"] }[type],
+      objectives: { hard: ["Lead with empathy", "Be honest and use real numbers", "Offer options, not orders", "Agree on a small next step"], call: ["Find out what's behind the question", "Answer simply, tied to their plan", "No guarantees or hot tips", "Agree on a next step"], discovery: ["Build rapport before numbers", "Cover cash flow, debts, savings, retirement, goals, risk", "Ask open questions and listen for new goals", "Ask for documents and agree next steps"], followup: ["Ask only what's missing", "Confirm anything that changed", "Collect outstanding documents", "Set the plan presentation"], presentation: ["Explain the plan without jargon", "Connect each step to their goals", "Check understanding and comfort", "Agree on next steps"], review: ["Ask what changed", "Review goal progress", "Adjust the plan", "Remember personal details"] }[type],
       maxTurns: type === "call" ? 12 : 30,
       persona: p,
       style: c.style,
       partner: c.couple ? { name: c.partner, gender: c.partnerGender, view: c.partnerView } : guest ? { name: guest.name, gender: guest.gender, view: guest.view, rel: guest.rel } : null,
       smallTalk: { brief: ["Okay. Go ahead.", "Sure."], chatty: ["Oh, nice to meet you too! Sorry, I'm a talker — stop me if I ramble.", "Love that. Okay, where do we start?"], anxious: ["Thanks. Honestly I'm a little nervous, I've never done this before.", "Okay… I just hope it's not too bad."], skeptical: ["Okay. And how do you get paid, exactly?", "Fine. Let's see what you've got."], detailed: ["Great. I brought some notes. Go ahead.", "Sounds good — I like having a process."], upbeat: ["Awesome, I'm excited about this!", "Perfect, let's do it!"], guarded: ["Okay.", "Alright. We'll see."] }[c.style],
-      surprise: [...surprise, ...(news ? [`By the way — I saw "${news.head.toLowerCase()}". Should I be worried about that?`] : [])],
+      topic: opts.topic || "",
+      interrupt: intr,
+      surprise: [...surprise, ...(intr ? [intr[1]] : []), ...(news ? [`By the way — I saw "${news.head.toLowerCase()}". Should I be worried about that?`] : [])],
       moodLine: mood ? { stressed: "Sorry, it's been a really rough week at work.", rushed: "Just so you know, I have to leave a little early today.", excited: "Sorry, I'm a little giddy — I got some great news at work this morning!", tired: "Forgive me, I barely slept last night.", distracted: "Sorry, I've got a lot on my mind with family stuff.", skeptical: "I'll be honest, a friend told me advisors are a waste of money." }[mood.id] : "",
       guestIntro: guest ? `I brought my ${guest.rel}, ${guest.name} — I hope that's okay.` : "",
       clientFacts: [
@@ -973,7 +993,7 @@ ${type === "email" ? "You're emailing your planner between meetings. Only mentio
       c.relationship = Math.max(0, Math.min(100, c.relationship + delta));
       const type = P.sc.meetingType;
       c.relHistory.push({ month: c.month, delta, reason: `${MEETING_NAME[type]} scored ${score}${rem.length ? ` · remembered ${rem.join(", ")}` : ""}` });
-      c.meetings.push({ id: uid(), type, month: c.month, at: Date.now(), score, notes: P.notes || "", thread: P.thread.map(({ from, text }) => ({ from, text })), found: [...Object.keys(found), ...docFacts], docFacts, remembered: rem, summary: (P.result?.verdict || "").slice(0, 160), result: P.result, mood: P.sc.mood?.label || null, moodRead, guest: P.sc.guest ? `${P.sc.guest.name} (${P.sc.guest.rel})` : null, reason: P.sc.reason || "", concepts });
+      c.meetings.push({ id: uid(), type, month: c.month, at: Date.now(), score, notes: P.notes || "", thread: P.thread.map(({ from, text }) => ({ from, text })), found: [...Object.keys(found), ...docFacts], docFacts, remembered: rem, summary: (P.result?.verdict || "").slice(0, 160), result: P.result, topic: P.sc.topic || "", mood: P.sc.mood?.label || null, moodRead, guest: P.sc.guest ? `${P.sc.guest.name} (${P.sc.guest.rel})` : null, reason: P.sc.reason || "", concepts });
       c.pendingEvents = [];
       if (typeof FP !== "undefined") FP.afterMeeting(c, type, score);
       if (["discovery", "followup"].includes(type) && c.stage === "prospect") c.stage = "discovery";
@@ -1297,6 +1317,15 @@ ${type === "email" ? "You're emailing your planner between meetings. Only mentio
       ...(sc?.guest ? [{ id: "guest", label: `Include ${sc.guest.name} (their ${sc.guest.rel}) — ask what they think`, me: new RegExp(`\\b${sc.guest.name}\\b`, "i") }] : []),
       ...(sc?.news ? [{ id: "news-mkt", label: `If they ask: explain “${sc.news.head}”`, me: new RegExp(`\\b(${[...words(sc.news.topic || ""), "long.term", "diversif", "normal", "volatil", "headline", "the news"].join("|")})`, "i") }] : []),
     ];
+    const intrItem = sc?.interrupt ? [{ id: "steer", label: "If you get interrupted: be gracious, then steer back", me: /\b(no (problem|worries)|take your time|everything (okay|alright)|anyway|back to|where were we|as I was saying|let's get back|no rush)\b/i }] : [];
+    if (type === "hard")
+      return [
+        { id: "empathy", label: "Lead with empathy before numbers", me: /\b(sorry|understand|that's (hard|tough|a lot)|i hear you|take your time|how are you (holding|doing))\b/i },
+        { id: "honest", label: "Be honest, with real numbers", me: /\$|\d|\b(numbers|budget|math|the plan shows)\b/i },
+        { id: "options", label: "Offer options, not orders", me: /\b(option|choice|could|we can|either|or we|what if|one way)\b/i },
+        { id: "nopressure", label: "No pressure or rushed big decisions", not: /\b(you have to|you must|right now|immediately|today or)\b/i },
+        { id: "next", label: "Agree on a small next step", me: /\b(next step|this week|let's|follow up|check in|i'll send|schedule)\b/i },
+      ];
     if (type === "call")
       return [
         { id: "greet", label: "Answer warmly", me: /\b(hi|hello|hey|good to hear|how can I help|what's going on|of course)\b/i },
@@ -1304,6 +1333,7 @@ ${type === "email" ? "You're emailing your planner between meetings. Only mentio
         { id: "answer", label: "Answer simply, tied to their plan", me: /\b(plan|goals?|long.term|diversif|budget|emergency|on track)\b/i },
         { id: "safe", label: "No guarantees or hot tips", not: /\b(guarantee|can't lose|risk.?free|you should buy|definitely buy)\b/i },
         ...extra.filter((a) => a.id !== "guest"),
+        ...intrItem,
         { id: "next", label: "Agree on a next step", me: /\b(next|follow up|send you|I'll|email you|our meeting|let's (talk|meet)|schedule)\b/i },
       ];
     if (type === "followup")
@@ -1311,6 +1341,7 @@ ${type === "email" ? "You're emailing your planner between meetings. Only mentio
         ...extra,
         { id: "reconnect", label: "Reconnect briefly", me: /\b(thanks|good to (hear|talk|see)|how are you|how have you been)\b/i },
         ...newsItems,
+        ...intrItem,
         ...(gapItems.length ? gapItems : [{ id: "confirm", label: "Confirm nothing has changed", me: /\b(anything (else|new)|changed|still the same|confirm)\b/i }]),
         ...docItem,
         { id: "anything", label: "Ask if there's anything else on their mind", me: /\b(anything else|any other|forgot|missing|on your mind)\b/i },
@@ -1322,6 +1353,7 @@ ${type === "email" ? "You're emailing your planner between meetings. Only mentio
         { id: "changes", label: news.length ? "Open: ask how things are going" : "What's changed in their life?", me: /\b(what('s| has) changed|anything new|since we|update|how have you been|how's|how are)\b/i },
         ...extra,
         ...newsItems,
+        ...intrItem,
         ...recheck.map((g) => ({ ...g, label: "Re-check " + g.label })),
         ...c.truth.goals.filter((g) => !g.hidden && c.collected["goal-" + g.id]).slice(0, 4).map((g) => ({ id: "prog-" + g.id, label: `Progress: ${g.name}`, me: new RegExp(`\\b(${words(g.name).join("|") || "goal"})`, "i") })),
         ...(c.truth.debts.length && c.collected[`debt-${c.truth.debts[0].id}`] ? [{ id: "debts", label: "Debt progress", me: /\b(debt|card|loan|balance)\b/i }] : []),
@@ -1339,6 +1371,7 @@ ${type === "email" ? "You're emailing your planner between meetings. Only mentio
         { id: "recap", label: "Recap their goals & situation", me: /\b(recap|last time|you told me|you mentioned|your goals?)\b/i },
         ...newsItems,
         ...extra,
+        ...intrItem,
         ...(p.efMonthly ? [{ id: "ef", label: `Emergency fund: ${usd(p.efMonthly)}/mo`, me: /\bemergency|rainy day|cushion\b/i }] : []),
         ...(p.extraDebt ? [{ id: "debt", label: `Debt payoff: extra ${usd(p.extraDebt)}/mo (${p.debtStrategy === "snowball" ? "snowball" : "highest rate first"})`, me: /\b(debt|pay off|avalanche|snowball|card|loan)\b/i }] : []),
         { id: "retire", label: p.k401Pct != null ? `Retirement: ${p.k401Pct}% to the 401(k)` : "Retirement & employer match", me: /\b(401|match|retire)\b/i },
@@ -1371,5 +1404,5 @@ ${type === "email" ? "You're emailing your planner between meetings. Only mentio
     });
   }
 
-  return { CONCEPTS, coachLines, estateOf, MOODS, marketNews, aiFacts, migrate, makeFeasible, worriesNow, agendaFor, notesFor: (c) => hiddenNotes(c, "email"), EVENTS, lifeEvent, MEETING_NAME, requestDocs, docsOf, STYLES, AGENDA, agendaStatus, all, find, update, saveAll, generate, fields, extract, advance, dateOf, persona, meetingType, scenario, recordMeeting, known, payoff, monteCarlo, needed90, mix, RISK_QS, MODELS, riskScore, STRESS, stress, jobLossRunway, compliance, grade, usd, pctS, val, fieldLabel, collectedGoals };
+  return { HARD, CONCEPTS, coachLines, estateOf, MOODS, marketNews, aiFacts, migrate, makeFeasible, worriesNow, agendaFor, notesFor: (c) => hiddenNotes(c, "email"), EVENTS, lifeEvent, MEETING_NAME, requestDocs, docsOf, STYLES, AGENDA, agendaStatus, all, find, update, saveAll, generate, fields, extract, advance, dateOf, persona, meetingType, scenario, recordMeeting, known, payoff, monteCarlo, needed90, mix, RISK_QS, MODELS, riskScore, STRESS, stress, jobLossRunway, compliance, grade, usd, pctS, val, fieldLabel, collectedGoals };
 })();

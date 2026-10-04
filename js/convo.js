@@ -597,7 +597,7 @@ async function startPractice(btn, adaptive) {
     // Client-book meeting: the client file supplies everything (no AI setup needed).
     const cm = P.clientMeeting && Clients.find(P.clientMeeting.id);
     if (cm) {
-      sc = Clients.scenario(cm, P.clientMeeting.type, { reason: P.clientMeeting.reason });
+      sc = Clients.scenario(cm, P.clientMeeting.type, { reason: P.clientMeeting.reason, topic: P.clientMeeting.topic });
       sc.offline = !AI.enabled();
       sc.revealed = [];
       sc.minutes = setupOpts.minutes;
