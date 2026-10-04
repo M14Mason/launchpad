@@ -780,14 +780,34 @@ function drawTranscript() {
   if (P.sc?.clientId) deskRefresh();
 }
 
+function splitSpeakers(text) {
+  const out = [];
+  const re = /\[([A-Za-z]+)\]\s*/g;
+  let m;
+  let last = 0;
+  let who = null;
+  while ((m = re.exec(text))) {
+    if (m.index > last) out.push({ who, text: text.slice(last, m.index).trim() });
+    who = m[1];
+    last = re.lastIndex;
+  }
+  out.push({ who, text: text.slice(last).trim() });
+  return out.filter((p) => p.text);
+}
+function partnerPersona() {
+  const pool = CHARACTERS.filter((c) => c.gender === P.sc.partner.gender && c.id !== P.persona?.id);
+  const ch = pool[Math.abs(hash(P.sc.partner.name)) % pool.length] || CHARACTERS[0];
+  return { ...ch, name: P.sc.partner.name };
+}
+
 async function say(text) {
   P.listening = false;
   P.listener?.stop();
   P.thread.push({ from: "them", text });
   drawTranscript();
   LiveFX.line();
-  P.caption = text;
-  LiveFX.caption(text);
+  P.caption = text.replace(/\[([A-Za-z]+)\]\s*/g, "$1: ");
+  LiveFX.caption(P.caption);
   setStatus("Speaking…");
   P.speaking = true;
   P.speakSince = Date.now();
@@ -795,7 +815,13 @@ async function say(text) {
   LiveFX.speaking(true);
   plog(`${P.sc.counterpart.name.split(" ")[0]} speaks (${text.split(/\s+/).length} words)`);
   try {
-    await Voice.speak(text, { persona: P.persona, gender: P.sc.counterpart.gender, seed: P.seed + P.sc.counterpart.name, onWord: (v) => Orb3D.current?.pulse(v) });
+    // Couples meetings: "[Name] ..." segments are spoken by each partner in their own voice.
+    const parts = P.sc.partner ? splitSpeakers(text) : [{ who: null, text }];
+    for (const part of parts) {
+      if (!P.speaking) break;
+      const isPartner = part.who && P.sc.partner && part.who.toLowerCase() === P.sc.partner.name.toLowerCase();
+      await Voice.speak(part.text, { persona: isPartner ? partnerPersona() : P.persona, gender: isPartner ? P.sc.partner.gender : P.sc.counterpart.gender, seed: P.seed + (isPartner ? P.sc.partner.name : P.sc.counterpart.name), onWord: (v) => Orb3D.current?.pulse(v) });
+    }
   } catch (e) {
     plog("voice error: " + e.message);
   }
@@ -928,6 +954,11 @@ async function onMyTurn(text, duration, audio = null) {
   if (!r) {
     await wait(500); // a natural beat before the built-in partner answers
     r = OFFLINE.turn(P.sc, P.thread, P.kind, { elapsed: (Date.now() - P.started) / 60000, minutes: P.minutes, opts: P.setupOpts });
+    // Built-in couples: the partner chimes in with their own view sometimes.
+    if (P.sc.partner && !r.end && Math.random() < 0.45) {
+      const v = P.sc.partner.view;
+      r.reply = `[${P.sc.counterpart.name.split(" ")[0]}] ${r.reply} [${P.sc.partner.name}] ${["Can I jump in? Honestly, I " + v.replace(/^wants/, "want").replace(/^is/, "am").replace(/^thinks/, "think") + ".", "I see it a little differently than " + P.sc.counterpart.name.split(" ")[0] + ".", "That's fair. But what about what I care about?", "We've argued about this a lot, honestly."][Math.floor(Math.random() * 4)]}`;
+    }
   }
   P.thinking = false;
   if (r.end) P.ending = true;

@@ -123,7 +123,8 @@ const Clients = (() => {
 
 
   // ---------- generate a client ----------
-  function generate(difficulty = "realistic", seed = Math.floor(Math.random() * 1e9)) {
+  // opts: { book: "practice"|"career", day: calendar day created, wealth: 0-4, couple: bool }
+  function generate(difficulty = "realistic", seed = Math.floor(Math.random() * 1e9), opts = {}) {
     const r = rng(seed);
     const gender = r() < 0.5 ? "female" : "male";
     const first = pickR(r, FIRST[gender]);
@@ -249,6 +250,25 @@ const Clients = (() => {
       relHistory: [{ month: 0, delta: 0, reason: `Referred by ${referral.replace(/^their /, "their ")}` }],
       portfolio: [{ month: 0, value: k401 + roth }],
     };
+    c.book = opts.book || "practice";
+    c.startDay = opts.day || 0;
+    // Wealthier clients (career mode, higher roles): bigger income and a taxable brokerage account.
+    const w = opts.wealth || 0;
+    if (w > 0) {
+      const mult = [1, 1.3, 1.7, 2.4, 3.5][w];
+      c.income = Math.round((c.income * mult) / 1000) * 1000;
+      c.truth.takeHome = Math.round((c.truth.takeHome * mult * 0.93) / 10) * 10;
+      c.truth.brokerage = Math.round(([0, 30000, 120000, 450000, 1400000][w] * (0.7 + r() * 0.8)) / 1000) * 1000;
+      c.truth.k401 = Math.round((c.truth.k401 * mult) / 500) * 500;
+      c.portfolio = [{ month: 0, value: c.truth.k401 + c.truth.roth }];
+    }
+    // Couples meetings: both partners join, with their own personality and opinions.
+    if (c.partner && (opts.couple || (opts.couple == null && r() < 0.3))) {
+      c.couple = true;
+      c.partnerGender = c.gender === "female" ? "male" : "female";
+      c.partnerStyle = pickR(r, Object.keys(STYLES).filter((x) => x !== c.style));
+      c.partnerView = pickR(r, ["wants to spend more on travel now", "wants to pay off debt before anything else", "is much more nervous about investing", "wants to retire earlier", "thinks the kids' college should come first", "wants a bigger house"]);
+    }
     return c;
   }
 
@@ -265,6 +285,7 @@ const Clients = (() => {
       { key: "contrib", label: "401(k) contribution %", sec: "Retirement", ask: /contribut|what percent|how much do you (put|save)|put in/i, num: t.contrib, pct: true, say: () => (t.contrib ? `I put in ${t.contrib}% of my pay.` : "I'm not contributing anything right now.") },
       { key: "match", label: "Employer match %", sec: "Retirement", ask: /\bmatch|employer/i, num: t.match, pct: true, say: () => (t.match ? `My employer matches up to ${t.match}%.` : "My job doesn't offer a match, as far as I know.") },
       { key: "roth", label: "Roth IRA balance", sec: "Retirement", ask: /roth|\bira\b|other (accounts?|investments?)|brokerage|invest/i, num: t.roth, say: (v) => (t.roth ? `I have a Roth IRA with about ${v(t.roth)}.` : "No, I don't have a Roth or any other investments.") },
+      ...(t.brokerage ? [{ key: "brokerage", label: "Brokerage / taxable investments", sec: "Assets", ask: /brokerage|taxable|investment account|other (accounts?|investments?)|stocks/i, num: t.brokerage, say: (v) => `We also have a brokerage account — about ${v(t.brokerage)} in index funds and some individual stocks.` }] : []),
       { key: "riskq", label: "Risk questionnaire (client's own answers)", sec: "Risk", ask: /(?!)/, text: "completed", say: () => "" },
       { key: "risk", label: "Risk tolerance (in their words)", sec: "Risk", ask: /risk|comfortable|market (drop|fall|crash)|volatil|lose money|ups and downs|stock/i, text: RISK_SAY[t.risk - 1], say: () => RISK_SAY[t.risk - 1] },
       { key: "insurance", label: "Life insurance", sec: "Protection", ask: /insur|protect|if something happen/i, text: t.insurance == null ? "n/a" : t.insurance ? "has a policy" : "none", say: () => (t.insurance == null ? "Insurance? Just what comes through work, I think." : t.insurance ? "I have a life insurance policy through work." : "No, I don't have life insurance. I keep meaning to look into it.") },
@@ -325,17 +346,83 @@ const Clients = (() => {
     return PERSONAL(c).filter((p) => heardBefore.includes(p.word) && new RegExp("\\b" + p.word + "\\b", "i").test(mine)).map((p) => p.word);
   }
 
-  // ---------- simulated calendar + random life events ----------
+  // ---------- life events (random, like real life) ----------
+  // w: how common · cond: who it can happen to · text: your note · say: how the client tells you · apply: what changes
+  const pct = (c, p) => Math.round(c.income * p / 1000) * 1000;
+  const addGoal = (c, id, name, target, years, say) => { if (!c.truth.goals.some((g) => g.id === id)) c.truth.goals.push({ id, name, target, years, priority: 3, say }); };
+  const spend = (c, amt) => {
+    const t = c.truth;
+    const fromCash = Math.min(t.cash, amt);
+    t.cash -= fromCash;
+    if (amt > fromCash) {
+      const cc = t.debts.find((d) => d.id === "cc") || (t.debts.push({ id: "cc", name: "Credit card", balance: 0, apr: 24.9, min: 35 }), t.debts[t.debts.length - 1]);
+      cc.balance += amt - fromCash;
+      cc.min = Math.max(35, Math.round(cc.balance * 0.03 / 5) * 5);
+    }
+  };
   const EVENTS = [
-    { id: "raise", p: 0.18, text: (c) => `${c.first} got a ${Math.round(5 + Math.random() * 7)}% raise.`, apply: (c, e) => ((c.income = Math.round((c.income * (1 + e.n / 100)) / 1000) * 1000), (c.truth.takeHome = Math.round((c.truth.takeHome * (1 + e.n / 100)) / 10) * 10)), n: () => Math.round(5 + Math.random() * 7) },
-    { id: "jobloss", p: 0.08, text: (c) => `${c.first} was laid off and is job hunting.`, apply: (c) => ((c.truth.cash = Math.max(0, c.truth.cash - c.truth.expenses * 2)), c.goalsNote = "Job search — cash is tight") },
-    { id: "baby", p: 0.07, cond: (c) => c.age < 42, text: (c) => `${c.first} ${c.married ? "and " + c.partner + " are" : "is"} expecting a baby.`, apply: (c) => ((c.truth.living += 900), c.truth.goals.push({ id: "college-baby", name: "New baby's college fund", target: 120000, years: 18, priority: 3 })) },
-    { id: "car", p: 0.12, text: (c) => `${c.first}'s car needed a $3,200 repair.`, apply: (c) => (c.truth.cash = Math.max(0, c.truth.cash - 3200)) },
-    { id: "inherit", p: 0.05, text: (c) => `${c.first} inherited $20,000 from a relative.`, apply: (c) => (c.truth.cash += 20000) },
-    { id: "medical", p: 0.08, text: (c) => `${c.first} had a $2,800 medical bill.`, apply: (c) => (c.truth.cash = Math.max(0, c.truth.cash - 2800)) },
-    { id: "rent", p: 0.1, cond: (c) => !c.truth.owns, text: (c) => `${c.first}'s rent went up $175 a month.`, apply: (c) => ((c.truth.housing += 175), (c.truth.expenses = c.truth.housing + c.truth.living)) },
-    { id: "goal", p: 0.12, text: (c) => `${c.first} now wants to retire 3 years earlier.`, apply: (c) => { const g = c.truth.goals.find((x) => x.id === "retire"); if (g) g.years = Math.max(5, g.years - 3); delete c.collected["when-retire"]; } },
-    { id: "newgoal", p: 0.2, text: () => "", apply: (c, e) => {
+    // Career & income
+    { id: "raise", w: 10, text: (c, e) => `${c.first} got a ${e.n}% raise.`, say: (c, e) => `Good news — I got a ${e.n}% raise!`, n: (r) => Math.round(3 + r() * 9), apply: (c, e) => { c.income = Math.round(c.income * (1 + e.n / 100) / 1000) * 1000; c.truth.takeHome = Math.round(c.truth.takeHome * (1 + e.n / 100) / 10) * 10; } },
+    { id: "promotion", w: 5, text: (c) => `${c.first} was promoted.`, say: () => `I got promoted! More responsibility, but a nice bump in pay.`, apply: (c) => { c.income = Math.round(c.income * 1.15 / 1000) * 1000; c.truth.takeHome = Math.round(c.truth.takeHome * 1.13 / 10) * 10; } },
+    { id: "bonus", w: 6, text: (c, e) => `${c.first} received a $${e.n.toLocaleString()} bonus.`, say: (c, e) => `I just got a $${e.n.toLocaleString()} bonus. What should I do with it?`, n: (r, c) => Math.round(c.income * (0.03 + r() * 0.1) / 500) * 500, apply: (c, e) => (c.truth.cash += e.n) },
+    { id: "jobloss", w: 4, text: (c) => `${c.first} was laid off.`, say: () => `I got laid off yesterday. I'm honestly freaking out. What do I do?`, apply: (c) => { c.truth.cash = Math.max(0, c.truth.cash - c.truth.expenses); c.laidOff = true; } },
+    { id: "newjob", w: 5, text: (c) => `${c.first} started a new job.`, say: () => `I accepted a new job! Different benefits though — they have a 401(k) with a match. What do I do with my old 401(k)?`, apply: (c) => { c.income = Math.round(c.income * 1.1 / 1000) * 1000; c.truth.match = Math.max(c.truth.match, 4); c.truth.contrib = 0; c.laidOff = false; } },
+    { id: "hours", w: 3, cond: (c) => ["hourly", "gig"].includes(c.payType), text: (c) => `${c.first}'s hours were cut.`, say: () => `They cut my hours at work. Money's going to be tight for a while.`, apply: (c) => (c.truth.takeHome = Math.round(c.truth.takeHome * 0.8 / 10) * 10) },
+    { id: "commission", w: 4, cond: (c) => ["commission", "self-employed", "freelance"].includes(c.payType), text: (c) => `${c.first} had a slow quarter.`, say: () => `Slowest quarter I've had in years. I had to dip into savings.`, apply: (c) => spend(c, Math.round(c.truth.expenses * 1.5)) },
+    { id: "bigclient", w: 3, cond: (c) => ["commission", "self-employed", "freelance"].includes(c.payType), text: (c) => `${c.first} landed a huge client.`, say: () => `I just landed my biggest client ever! This quarter is going to be great.`, apply: (c) => (c.truth.cash += Math.round(c.income * 0.15)) },
+    { id: "sidebiz", w: 3, text: (c) => `${c.first} started a side business.`, say: () => `I started selling stuff online on the side — it's actually making a few hundred a month!`, apply: (c) => (c.truth.takeHome += 400) },
+    { id: "backschool", w: 2, cond: (c) => c.age < 45, text: (c) => `${c.first} enrolled in a degree program.`, say: () => `I decided to go back to school part-time. Tuition is about $8,000 a year.`, apply: (c) => (c.truth.living += 650) },
+    { id: "retireoffer", w: 2, cond: (c) => c.age > 55, text: (c) => `${c.first} was offered early retirement.`, say: () => `My company offered me an early retirement package. Should I take it?`, apply: (c) => (c.truth.cash += pct(c, 0.5)) },
+    { id: "stockcomp", w: 2, cond: (c) => c.income > 100000, text: (c) => `${c.first} received company stock (RSUs).`, say: () => `My company gave me $20,000 in stock that vests over four years. I have no idea how that works.`, apply: (c) => (c.truth.roth += 5000) },
+    // Family
+    { id: "baby", w: 4, cond: (c) => c.age < 43 && (c.married || c.partner), text: (c) => `${c.first} is expecting a baby.`, say: () => `We're having a baby!! Due in about seven months. What do we need to change?`, apply: (c) => { c.truth.living += 950; c.kids.push({ name: "Baby", age: 0 }); addGoal(c, "college-baby", "New baby's college fund", 150000, 18); } },
+    { id: "engaged", w: 3, cond: (c) => !c.married && c.age < 45, text: (c) => `${c.first} got engaged.`, say: () => `I got engaged! We're thinking about a wedding next year — maybe $30,000?`, apply: (c) => addGoal(c, "wedding", "Pay for their wedding", 30000, 1, "We're planning the wedding — about {amt} — next year.") },
+    { id: "married", w: 2, cond: (c) => c.household === "partner", text: (c) => `${c.first} and ${c.partner} got married.`, say: (c) => `${c.partner} and I got married! Do we combine finances now?`, apply: (c) => { c.married = true; c.household = "married"; } },
+    { id: "divorce", w: 2, cond: (c) => c.married, text: (c) => `${c.first} is going through a divorce.`, say: () => `This is hard to write. We're getting divorced. I don't know what this means for money.`, apply: (c) => { c.married = false; c.household = "divorced"; c.truth.cash = Math.round(c.truth.cash / 2); c.truth.k401 = Math.round(c.truth.k401 * 0.6); c.truth.housing = Math.round(c.truth.housing * 0.8); } },
+    { id: "parentcare", w: 3, cond: (c) => c.age > 38, text: (c) => `${c.first}'s parent needs care.`, say: () => `My dad fell and needs help at home now. We're paying for an aide a few days a week.`, apply: (c) => (c.truth.living += 900) },
+    { id: "parentmove", w: 2, cond: (c) => c.age > 40, text: (c) => `${c.first}'s mother is moving in.`, say: () => `My mom is moving in with us. It'll help her, but our grocery bill is about to go up.`, apply: (c) => (c.truth.living += 400) },
+    { id: "inherit", w: 2, text: (c, e) => `${c.first} inherited $${e.n.toLocaleString()}.`, say: (c, e) => `My aunt passed away and left me $${e.n.toLocaleString()}. I don't want to waste it.`, n: (r) => Math.round((10000 + r() * 90000) / 1000) * 1000, apply: (c, e) => (c.truth.cash += e.n) },
+    { id: "kidcollege", w: 3, cond: (c) => c.kids.some((k) => k.age >= 16), text: (c) => `${c.first}'s child got into college.`, say: () => `My kid got into college! It's $28,000 a year after aid. Are we ready?`, apply: (c) => (c.truth.living += 600) },
+    { id: "kidbraces", w: 3, cond: (c) => c.kids.some((k) => k.age >= 9 && k.age <= 15), text: (c) => `${c.first}'s kid needs braces ($6,000).`, say: () => `Orthodontist says my kid needs braces. $6,000. Ugh.`, apply: (c) => spend(c, 6000) },
+    { id: "kidsport", w: 2, cond: (c) => c.kids.some((k) => k.age >= 8 && k.age <= 17), text: (c) => `${c.first}'s kid joined a travel sports team.`, say: () => `My kid made the travel team! Which is great… and expensive.`, apply: (c) => (c.truth.living += 300) },
+    { id: "adoptpet", w: 3, text: (c) => `${c.first} adopted a dog.`, say: () => `We adopted a dog! His name is Waffles. Totally unrelated to finance, but I had to tell you.`, apply: (c) => { c.truth.living += 120; c.truth.pet = ["dog", "Waffles"]; } },
+    { id: "familyloan", w: 2, text: (c) => `${c.first}'s brother asked to borrow $5,000.`, say: () => `My brother asked to borrow $5,000. I want to help, but… should I?`, apply: () => {} },
+    // Health
+    { id: "medical", w: 5, text: (c, e) => `${c.first} had a $${e.n.toLocaleString()} medical bill.`, say: (c, e) => `I ended up in the ER — the bill came to $${e.n.toLocaleString()} after insurance.`, n: (r) => Math.round((1500 + r() * 8000) / 100) * 100, apply: (c, e) => spend(c, e.n) },
+    { id: "surgery", w: 2, text: (c) => `${c.first} needs surgery and will miss 6 weeks of work.`, say: () => `I need knee surgery. I'll be out of work for about six weeks.`, apply: (c) => { spend(c, 4000); c.truth.cash = Math.max(0, c.truth.cash - Math.round(c.truth.takeHome * 0.5)); } },
+    { id: "diagnosis", w: 1, cond: (c) => c.age > 45, text: (c) => `${c.first} received a serious diagnosis.`, say: () => `I got some hard news from my doctor. It's treatable, but it has me rethinking everything — including when I retire.`, apply: (c) => { const g = c.truth.goals.find((x) => x.id === "retire"); if (g) g.years = Math.max(2, g.years - 4); } },
+    { id: "therapy", w: 2, text: (c) => `${c.first} started therapy ($200/month).`, say: () => `I started seeing a therapist. It's $200 a month but honestly worth it.`, apply: (c) => (c.truth.living += 200) },
+    // Home & car
+    { id: "rent", w: 6, cond: (c) => !c.truth.owns, text: (c, e) => `${c.first}'s rent went up $${e.n}.`, say: (c, e) => `My landlord is raising the rent by $${e.n} a month. Should I move?`, n: (r) => Math.round((100 + r() * 300) / 25) * 25, apply: (c, e) => (c.truth.housing += e.n) },
+    { id: "evicted", w: 1, cond: (c) => !c.truth.owns, text: (c) => `${c.first}'s landlord is selling the building.`, say: () => `My landlord is selling the building — I have 60 days to move out. Moving costs are going to hurt.`, apply: (c) => { spend(c, 3500); c.truth.housing += 250; } },
+    { id: "boughthome", w: 2, cond: (c) => !c.truth.owns && c.truth.cash > 30000, text: (c) => `${c.first} bought a home.`, say: () => `We did it — we bought a house! The mortgage is a little higher than rent was.`, apply: (c) => { c.truth.owns = true; c.truth.cash = Math.round(c.truth.cash * 0.25); c.truth.housing = Math.round(c.truth.housing * 1.2); c.truth.goals = c.truth.goals.filter((g) => g.id !== "house"); } },
+    { id: "roof", w: 3, cond: (c) => c.truth.owns, text: (c) => `${c.first}'s roof needs replacing ($14,000).`, say: () => `The roof is leaking and needs to be replaced. $14,000. I didn't plan for this.`, apply: (c) => spend(c, 14000) },
+    { id: "hvac", w: 3, cond: (c) => c.truth.owns, text: (c) => `${c.first}'s AC died ($7,500).`, say: () => `Our AC died in a heat wave. New system is $7,500.`, apply: (c) => spend(c, 7500) },
+    { id: "refi", w: 2, cond: (c) => c.truth.owns, text: (c) => `${c.first} refinanced the mortgage.`, say: () => `I refinanced the mortgage — saved about $250 a month!`, apply: (c) => (c.truth.housing -= 250) },
+    { id: "car", w: 6, text: (c) => `${c.first}'s car needed a $3,200 repair.`, say: () => `Transmission went out. $3,200 repair.`, apply: (c) => spend(c, 3200) },
+    { id: "accident", w: 3, text: (c) => `${c.first} was in a car accident (deductible + rate increase).`, say: () => `I got in a fender bender — I'm fine, but I owe the $1,000 deductible and my insurance is going up.`, apply: (c) => { spend(c, 1000); c.truth.living += 60; } },
+    { id: "newcar", w: 3, text: (c) => `${c.first} bought a new car with a loan.`, say: () => `I bought a new car. Took a loan — 7.9% for six years. Was that dumb?`, apply: (c) => { const d = c.truth.debts.find((x) => x.id === "car"); if (d) { d.balance += 22000; d.min += 300; } else c.truth.debts.push({ id: "car", name: "Car loan", balance: 32000, apr: 7.9, min: 560 }); } },
+    { id: "theft", w: 1, text: (c) => `${c.first}'s identity was stolen.`, say: () => `Someone stole my identity and opened a credit card in my name. Is my money safe?`, apply: () => {} },
+    { id: "move", w: 2, text: (c) => `${c.first} is moving to a cheaper city.`, say: () => `We decided to move somewhere cheaper. Our costs are going to drop a lot.`, apply: (c) => { c.truth.housing = Math.round(c.truth.housing * 0.75); spend(c, 4000); } },
+    // Money moves & mistakes
+    { id: "crypto", w: 3, text: (c) => `${c.first} put $5,000 into crypto.`, say: () => `So… I put $5,000 into crypto because my coworker kept talking about it. It's down 30% already.`, apply: (c) => spend(c, 3500) },
+    { id: "memestock", w: 2, text: (c) => `${c.first} lost money on a meme stock.`, say: () => `I bought a stock everyone on Reddit was hyping. Lost about $2,000. Lesson learned?`, apply: (c) => spend(c, 2000) },
+    { id: "scam", w: 1, text: (c) => `${c.first} lost $1,800 to a phone scam.`, say: () => `I'm embarrassed — someone pretending to be my bank got me to send $1,800.`, apply: (c) => spend(c, 1800) },
+    { id: "taxbill", w: 3, text: (c) => `${c.first} owes $4,200 in taxes.`, say: () => `I did my taxes and I OWE $4,200. I usually get a refund!`, apply: (c) => spend(c, 4200) },
+    { id: "refund", w: 4, text: (c) => `${c.first} got a $2,600 tax refund.`, say: () => `Got a $2,600 tax refund. Fun money, right?`, apply: (c) => (c.truth.cash += 2600) },
+    { id: "lottery", w: 1, text: (c) => `${c.first} won $10,000 in a raffle.`, say: () => `You're not going to believe this. I won $10,000 in a charity raffle!`, apply: (c) => (c.truth.cash += 10000) },
+    { id: "ccspike", w: 4, text: (c) => `${c.first} ran up the credit card.`, say: () => `I'll be honest, I went a little crazy with holiday shopping. The card is way higher than I'd like.`, apply: (c) => spend(c, 2500 + Math.round(c.truth.cash)) },
+    { id: "paidcard", w: 3, cond: (c) => c.truth.debts.some((d) => d.id === "cc"), text: (c) => `${c.first} paid off the credit card!`, say: () => `I PAID OFF MY CREDIT CARD. First time in years!`, apply: (c) => (c.truth.debts = c.truth.debts.filter((d) => d.id !== "cc")) },
+    { id: "studentforgive", w: 1, cond: (c) => c.truth.debts.some((d) => d.id === "student"), text: (c) => `Part of ${c.first}'s student loans were forgiven.`, say: () => `Part of my student loans got forgiven — about $10,000!`, apply: (c) => { const d = c.truth.debts.find((x) => x.id === "student"); if (d) d.balance = Math.max(0, d.balance - 10000); } },
+    { id: "lent", w: 2, text: (c) => `${c.first} co-signed a loan for a friend.`, say: () => `I co-signed a car loan for my cousin. That's fine, right?`, apply: () => {} },
+    // Goals & mindset
+    { id: "retireearly", w: 3, text: (c) => `${c.first} now wants to retire 3 years earlier.`, say: () => `I've been thinking — I want to retire three years earlier than we planned. Is that possible?`, apply: (c) => { const g = c.truth.goals.find((x) => x.id === "retire"); if (g) g.years = Math.max(3, g.years - 3); delete c.collected["when-retire"]; } },
+    { id: "retirelater", w: 2, text: (c) => `${c.first} decided to work a few more years.`, say: () => `Honestly, I like my job. I think I'll work a few extra years before retiring.`, apply: (c) => { const g = c.truth.goals.find((x) => x.id === "retire"); if (g) g.years += 3; delete c.collected["when-retire"]; } },
+    { id: "values", w: 2, text: (c) => `${c.first} wants investments that match their values.`, say: () => `I've been reading about ESG investing. I don't want my money in oil companies. Can we do that?`, apply: () => {} },
+    { id: "charity", w: 2, text: (c) => `${c.first} wants to give more to charity.`, say: () => `I want to start giving more to charity — maybe $200 a month. Is there a smart way to do that?`, apply: (c) => (c.truth.living += 200) },
+    { id: "riskup", w: 2, text: (c) => `${c.first} feels more comfortable with risk now.`, say: () => `After watching the market recover last time, I think I can handle more risk now.`, apply: (c) => { c.truth.risk = Math.min(5, c.truth.risk + 1); c.truth.riskAnswers = c.truth.riskAnswers.map((a) => Math.min(4, a + 1)); } },
+    { id: "riskdown", w: 2, text: (c) => `${c.first} got nervous about market risk.`, say: () => `Every news headline is making me nervous. Can we make things safer?`, apply: (c) => { c.truth.risk = Math.max(1, c.truth.risk - 1); c.truth.riskAnswers = c.truth.riskAnswers.map((a) => Math.max(0, a - 1)); } },
+    { id: "newgoal", w: 9, text: () => "", say: () => "", apply: (c, e) => {
         const have = new Set(c.truth.goals.map((g) => g.id));
         const opts = GOAL_POOL.filter((g) => !have.has(g.id) && g.when({ owns: c.truth.owns, age: c.age, income: c.income, married: c.married, kids: c.kids.length }));
         if (!opts.length) return;
@@ -343,8 +430,11 @@ const Clients = (() => {
         const goal = { id: g.id, name: g.name, target: Math.round((g.t[0] + Math.random() * (g.t[1] - g.t[0])) / 1000) * 1000, years: g.y[0] + Math.floor(Math.random() * (g.y[1] - g.y[0] + 1)), priority: 4, say: g.say };
         c.truth.goals.push(goal);
         e.text = `${c.first} has a new goal: ${g.name.toLowerCase()}.`;
+        e.say = `I've been thinking about something new — ${g.say.replace("{amt}", "$" + goal.target.toLocaleString()).replace("{yrs}", goal.years).replace(/^./, (x) => x.toLowerCase())}`;
       } },
+    { id: "dropgoal", w: 2, cond: (c) => c.truth.goals.length > 2, text: (c) => `${c.first} dropped a goal.`, say: (c, e) => `We decided we don't need ${e.goal?.toLowerCase() || "one of our goals"} anymore.`, apply: (c, e) => { const g = c.truth.goals.filter((x) => x.priority >= 4)[0]; if (g) { e.goal = g.name; c.truth.goals = c.truth.goals.filter((x) => x !== g); } } },
   ];
+
   // Market: annual return assumptions (nominal) for the simulator and the calendar.
   const ASSET = { stocks: { mu: 0.095, sd: 0.16 }, bonds: { mu: 0.045, sd: 0.06 }, cash: { mu: 0.03, sd: 0.005 }, corr: 0.1, inflation: 0.025 };
   const gauss = (r) => {
@@ -360,18 +450,20 @@ const Clients = (() => {
     const v = (s * ASSET.stocks.sd) ** 2 + (b * ASSET.bonds.sd) ** 2 + (k * ASSET.cash.sd) ** 2 + 2 * s * b * ASSET.corr * ASSET.stocks.sd * ASSET.bonds.sd;
     return { mu, sd: Math.sqrt(v) };
   }
-  // Move the client forward in time: markets, payments, savings, and maybe a random life event.
-  function advance(c, months) {
-    const r = rng(c.seed + c.month * 7919);
+  // Move the client forward one month at a time: markets, payments, savings, and maybe a life event.
+  // mret: this month's market returns {s: stocks, b: bonds} from the shared market (otherwise drawn here).
+  function advance(c, months, mret = null) {
+    const r = rng(c.seed + c.month * 7919 + 13);
     const plan = c.plan;
     const alloc = plan?.alloc || { stocks: 70, bonds: 25, cash: 5 };
     const { mu, sd } = mix(alloc);
     let value = c.portfolio[c.portfolio.length - 1]?.value || 0;
     const t = c.truth;
     for (let m = 0; m < months; m++) {
-      const ret = mu / 12 + (sd / Math.sqrt(12)) * gauss(r);
-      const contrib = (c.income / 12) * ((plan?.k401Pct ?? t.contrib) + Math.min(t.match, plan?.k401Pct ?? t.contrib)) / 100;
+      const ret = mret ? (alloc.stocks / 100) * mret.s + (alloc.bonds / 100) * mret.b + (alloc.cash / 100) * 0.0025 : mu / 12 + (sd / Math.sqrt(12)) * gauss(r);
+      const contrib = c.laidOff ? 0 : ((c.income / 12) * ((plan?.k401Pct ?? t.contrib) + Math.min(t.match, plan?.k401Pct ?? t.contrib))) / 100;
       value = Math.max(0, value * (1 + ret) + contrib);
+      if (c.aum) c.aum = Math.max(0, Math.round(c.aum * (1 + ret)));
       // Debts: minimums (plus the plan's extra payment, highest-rate first unless snowball).
       const order = [...t.debts].sort((a, b) => (plan?.debtStrategy === "snowball" ? a.balance - b.balance : b.apr - a.apr));
       let extra = plan?.extraDebt || 0;
@@ -383,38 +475,48 @@ const Clients = (() => {
         d.balance = Math.max(0, Math.round(d.balance - pay));
       }
       t.debts = t.debts.filter((d) => d.balance > 0);
-      const saved = plan ? Object.values(plan.goalSavings || {}).reduce((n, v) => n + (+v || 0), 0) + (plan.efMonthly || 0) : 0;
-      t.cash = Math.max(0, Math.round(t.cash + (plan?.efMonthly || 0) + (plan ? 0 : 50)));
+      t.cash = Math.max(0, Math.round(t.cash + (c.laidOff ? -t.expenses * 0.5 : (plan?.efMonthly || 0) + (plan ? 0 : 50))));
       c.goalBalances ||= {};
       if (plan) for (const [g, v] of Object.entries(plan.goalSavings || {})) c.goalBalances[g] = Math.round(((c.goalBalances[g] || 0) * (1 + ret) + (+v || 0)) * 100) / 100;
-      void saved;
+      c.month++;
+      // About one or two life events a year, weighted toward the common ones.
+      if (r() < 0.17) lifeEvent(c, r);
     }
-    c.month += months;
     t.k401 = Math.round(value - (t.roth || 0));
     c.portfolio.push({ month: c.month, value: Math.round(value) });
-    // Random life event (one at most per jump).
-    const pool = EVENTS.filter((e) => !e.cond || e.cond(c));
-    const chance = Math.min(0.75, 0.25 + months * 0.06);
-    if (r() < chance) {
-      const e = pool[Math.floor(r() * pool.length)];
-      const ev = { id: e.id, month: c.month, n: e.n?.() };
-      ev.text = e.id === "raise" ? `${c.first} got a ${ev.n}% raise.` : e.text(c);
-      e.apply(c, ev);
-      t.expenses = t.housing + t.living;
-      if (ev.text) {
-        c.events.push(ev);
-        c.pendingEvents.push(ev);
-      }
-      // New facts mean old answers may be out of date.
-      if (["jobloss", "car", "medical", "inherit"].includes(e.id)) delete c.collected.cash;
-      if (e.id === "rent") delete c.collected.housing;
-      if (e.id === "raise") delete c.collected.takeHome;
-    }
+    c.portfolio = c.portfolio.slice(-120);
   }
-  const dateOf = (c, month = c.month) => {
-    const d = new Date(c.createdAt);
-    d.setMonth(d.getMonth() + month);
-    return `${MONTHS[d.getMonth()]} ${d.getFullYear()}`;
+  function lifeEvent(c, r = Math.random, forceId = null) {
+    const t = c.truth;
+    const pool = EVENTS.filter((e) => (!e.cond || e.cond(c)) && !(c.events || []).slice(-6).some((x) => x.id === e.id));
+    let e = forceId ? EVENTS.find((x) => x.id === forceId) : null;
+    if (!e) {
+      const total = pool.reduce((n, x) => n + x.w, 0);
+      let pick = r() * total;
+      e = pool.find((x) => (pick -= x.w) < 0) || pool[0];
+    }
+    if (!e) return null;
+    const ev = { id: e.id, month: c.month, day: c.dayNow ?? null, n: e.n ? e.n(r, c) : undefined };
+    e.apply(c, ev);
+    ev.text ||= e.text(c, ev);
+    ev.say ||= e.say(c, ev);
+    t.expenses = t.housing + t.living;
+    if (!ev.text) return null;
+    c.events.push(ev);
+    c.pendingEvents.push(ev);
+    // New facts mean old answers may be out of date.
+    if (["jobloss", "car", "medical", "inherit", "bonus", "roof", "hvac", "surgery", "lottery", "crypto", "scam", "taxbill", "refund", "ccspike", "boughthome", "accident", "evicted", "kidbraces", "memestock", "commission", "bigclient", "retireoffer"].includes(e.id)) delete c.collected.cash;
+    if (["rent", "boughthome", "refi", "evicted", "move", "divorce"].includes(e.id)) delete c.collected.housing;
+    if (["raise", "promotion", "newjob", "hours", "sidebiz"].includes(e.id)) delete c.collected.takeHome;
+    if (["baby", "parentcare", "parentmove", "kidcollege", "kidsport", "therapy", "charity", "backschool", "adoptpet"].includes(e.id)) delete c.collected.living;
+    return ev;
+  }
+  // Dates come from the planner's calendar (the book's clock) when there is one.
+  const dateOf = (c, month = c.month, opts = {}) => {
+    const b = typeof FP !== "undefined" ? FP.bookOf(c) : null;
+    const d = b ? new Date(b.start + ((c.startDay || 0) + month * 30.44) * 86400000) : new Date(c.createdAt);
+    if (!b) d.setMonth(d.getMonth() + month);
+    return opts.day ? d.toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" }) : `${MONTHS[d.getMonth()]} ${d.getFullYear()}`;
   };
 
   // ---------- the meeting the practice engine runs ----------
@@ -471,6 +573,7 @@ const Clients = (() => {
     const hh = { married: `Married to ${c.partner}.`, partner: `Living with your partner ${c.partner} (not married).`, single: "Single.", divorced: "Divorced.", "single parent": "Single parent.", widowed: "Widowed." }[c.household] || (c.married ? `Married to ${c.partner}.` : "Single.");
     return `You are ${c.first} ${c.last}, ${c.age}, ${c.job} (${c.employer}; pay is ${c.payType || "salary"}) in ${c.city}, earning about ${usd(c.income)}/yr (take-home ${usd(t.takeHome)}/mo). ${hh} ${c.kids.length ? "Kids: " + c.kids.map((k) => `${k.name} (${k.age})`).join(", ") + "." : "No kids."} ${c.caregiver ? "You also help care for an aging parent." : ""} ${c.side ? "On the side you " + c.side + "." : ""} ${t.pet ? `Pet ${t.pet[0]} named ${t.pet[1]}.` : ""} Hobby: ${t.hobby}.
 PERSONALITY: ${STYLES[c.style] || "Friendly."} Stay consistent with it.
+${c.couple ? `COUPLES MEETING: your ${c.married ? "spouse" : "partner"} ${c.partner} is also here. You play BOTH people. ${c.partner}'s personality: ${STYLES[c.partnerStyle] || "friendly"}; ${c.partner} ${c.partnerView}, which ${c.first} doesn't fully agree with. Start each person's line with their name in brackets, like [${c.first}] ... [${c.partner}] ... Let ${c.partner} speak in most turns; sometimes they disagree and Mason has to balance both.` : ""}
 Money: ${t.owns ? "mortgage" : t.withFamily ? "you live with family and pay" : "rent"} ${usd(t.housing)}/mo; other spending ${usd(t.living)}/mo; cash savings ${usd(t.cash)}; ${t.k401 || t.contrib ? `401(k) ${usd(t.k401)}, contributing ${t.contrib}%${t.match ? `, employer matches up to ${t.match}%` : ", no employer match"}` : "no workplace retirement plan"}; ${t.roth ? "Roth IRA " + usd(t.roth) : "no Roth IRA"}; debts: ${t.debts.map((d) => `${d.name} ${usd(d.balance)} at ${d.apr}% (min ${usd(d.min)}/mo)`).join("; ") || "none"}. Life insurance: ${t.insurance == null ? "only through work" : t.insurance ? "yes" : "none"}.
 Goals you told them about on the intake form: ${t.goals.filter((g) => !g.hidden).map((g) => `${g.name} — about ${usd(g.target)} in ${g.years} years${g.say ? ` (in your words: "${g.say.replace("{amt}", usd(g.target)).replace("{yrs}", g.years)}")` : ""}`).join("; ")}.
 ${surprise.length ? `SURPRISE GOAL(S) you didn't put on the form: ${surprise.map((g) => `${g.name} — about ${usd(g.target)} in ${g.years} years`).join("; ")}. Partway through the conversation (not in your first two replies), bring it up casually on your own, like "Oh — before I forget…". Only mention it once.` : ""}
@@ -508,6 +611,7 @@ ${type === "presentation" ? "Mason is presenting his financial plan today. Ask a
       maxTurns: 30,
       persona: p,
       style: c.style,
+      partner: c.couple ? { name: c.partner, gender: c.partnerGender, view: c.partnerView } : null,
       smallTalk: { brief: ["Okay. Go ahead.", "Sure."], chatty: ["Oh, nice to meet you too! Sorry, I'm a talker — stop me if I ramble.", "Love that. Okay, where do we start?"], anxious: ["Thanks. Honestly I'm a little nervous, I've never done this before.", "Okay… I just hope it's not too bad."], skeptical: ["Okay. And how do you get paid, exactly?", "Fine. Let's see what you've got."], detailed: ["Great. I brought some notes. Go ahead.", "Sounds good — I like having a process."], upbeat: ["Awesome, I'm excited about this!", "Perfect, let's do it!"], guarded: ["Okay.", "Alright. We'll see."] }[c.style],
       surprise,
       clientFacts: [
@@ -553,6 +657,7 @@ ${type === "presentation" ? "Mason is presenting his financial plan today. Ask a
       c.relHistory.push({ month: c.month, delta, reason: `${MEETING_NAME[type]} scored ${score}${rem.length ? ` · remembered ${rem.join(", ")}` : ""}` });
       c.meetings.push({ id: uid(), type, month: c.month, at: Date.now(), score, notes: P.notes || "", thread: P.thread.map(({ from, text }) => ({ from, text })), found: [...Object.keys(found), ...docFacts], docFacts, remembered: rem, summary: (P.result?.verdict || "").slice(0, 160), result: P.result });
       c.pendingEvents = [];
+      if (typeof FP !== "undefined") FP.afterMeeting(c, type, score);
       if (["discovery", "followup"].includes(type) && c.stage === "prospect") c.stage = "discovery";
       if (type === "presentation") c.stage = score >= 55 ? "client" : c.stage;
       if (type === "review") c.stage = "client";
@@ -582,7 +687,7 @@ ${type === "presentation" ? "Mason is presenting his financial plan today. Ask a
     const living = val(c, "living");
     const debts = collectedDebts(c);
     const minPay = debts.reduce((n, d) => n + (d.min || 0), 0);
-    return { takeHome, housing, living, expenses: housing != null && living != null ? housing + living : null, cash: val(c, "cash"), k401: val(c, "k401"), contrib: val(c, "contrib"), match: val(c, "match"), roth: val(c, "roth"), risk: val(c, "risk"), riskq: val(c, "riskq"), debts, minPay, goals: collectedGoals(c) };
+    return { takeHome, housing, living, expenses: housing != null && living != null ? housing + living : null, cash: val(c, "cash"), k401: val(c, "k401"), contrib: val(c, "contrib"), match: val(c, "match"), roth: val(c, "roth"), risk: val(c, "risk"), riskq: val(c, "riskq"), brokerage: val(c, "brokerage"), debts, minPay, goals: collectedGoals(c) };
   }
   function collectedDebts(c) {
     const ids = new Set(Object.keys({ ...c.collected, ...(c.manual || {}) }).filter((k) => /^(debt|apr|min)-/.test(k)).map((k) => k.split("-")[1]));
@@ -833,5 +938,5 @@ ${type === "presentation" ? "Mason is presenting his financial plan today. Ask a
     });
   }
 
-  return { MEETING_NAME, requestDocs, docsOf, STYLES, AGENDA, agendaStatus, all, find, update, saveAll, generate, fields, extract, advance, dateOf, persona, meetingType, scenario, recordMeeting, known, payoff, monteCarlo, needed90, mix, RISK_QS, MODELS, riskScore, STRESS, stress, jobLossRunway, compliance, grade, usd, pctS, val, fieldLabel, collectedGoals };
+  return { EVENTS, lifeEvent, MEETING_NAME, requestDocs, docsOf, STYLES, AGENDA, agendaStatus, all, find, update, saveAll, generate, fields, extract, advance, dateOf, persona, meetingType, scenario, recordMeeting, known, payoff, monteCarlo, needed90, mix, RISK_QS, MODELS, riskScore, STRESS, stress, jobLossRunway, compliance, grade, usd, pctS, val, fieldLabel, collectedGoals };
 })();

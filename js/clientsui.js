@@ -97,6 +97,8 @@ const CL_TABS = [
   ["sims", "Simulations", "trend"],
   ["stress", "Stress tests", "alert"],
   ["meetings", "Meetings", "message"],
+  ["tax", "Taxes", "layers"],
+  ["income", "Retirement income", "sun"],
   ["doc", "Plan document", "file"],
 ];
 // The client journey: each step links to where you do it.
@@ -124,7 +126,7 @@ function renderClient(arg) {
   const cur = steps.findIndex((s) => !s.done);
   const others = Clients.all().filter((x) => x.id !== c.id);
   app.innerHTML = `
-    <div class="cl-topbar"><a class="back" href="#clients">‹ Client book</a>${others.length ? `<select id="cl-switch" aria-label="Switch client"><option value="">Switch client…</option>${others.map((x) => `<option value="${x.id}">${esc(x.first + " " + x.last)} · ${STAGES.find(([k]) => k === x.stage)[1]}</option>`).join("")}</select>` : ""}</div>
+    <div class="cl-topbar"><a class="back" href="#fp">‹ Financial planning</a>${others.length ? `<select id="cl-switch" aria-label="Switch client"><option value="">Switch client…</option>${others.map((x) => `<option value="${x.id}">${esc(x.first + " " + x.last)} · ${STAGES.find(([k]) => k === x.stage)[1]}</option>`).join("")}</select>` : ""}</div>
     <div class="client-head card">
       <div class="orb-host client-orb" id="cl-orb"></div>
       <div class="grow"><div class="eyebrow">${esc(c.job)} · ${esc(c.city)} · ${DIFF_LABEL[c.difficulty]}${c.style ? " · " + esc(c.style) + " personality" : ""}</div><h1>${esc(c.first)} ${esc(c.last)}</h1>
@@ -145,10 +147,25 @@ function renderClient(arg) {
     Motion.ensureVisible([...app.querySelectorAll(".jstep")], 1500);
   }
   const body = document.getElementById("cl-body");
-  ({ overview: clOverview, data: clData, plan: clPlan, sims: clSims, stress: clStress, meetings: clMeetings, doc: clDoc }[tab] || clOverview)(c, body);
+  ({ overview: clOverview, data: clData, plan: clPlan, sims: clSims, stress: clStress, meetings: clMeetings, doc: clDoc, tax: clTax, income: clIncome }[tab] || clOverview)(c, body);
+  FPDock.attach();
 }
 
 function nextStepHTML(c, type) {
+  // Meetings happen on the calendar: due today/overdue → start; scheduled later → skip ahead or meet early.
+  const b = FP.bookOf(c) || FP.book(c.book || "practice");
+  if (!c.next) c.next = { type, day: b.day };
+  const due = c.next.day <= b.day;
+  const when = due ? (c.next.day < b.day ? `<span class="bad-text">Overdue since ${FP.fmtDate(b, c.next.day)}</span>` : `<span class="good-text">Today</span>`) : `Scheduled ${FP.fmtDate(b, c.next.day, { weekday: "short", month: "short", day: "numeric" })}`;
+  const docsLeft = Clients.docsOf(c).filter((d) => d.status !== "received").length;
+  const label = { discovery: "Start discovery meeting", followup: "Follow-up call to fill gaps", presentation: "Present your plan", review: c.next.annual ? "Annual review" : "Quarterly review" }[type];
+  return `<div class="small">${when}</div>
+    ${type === "followup" ? `<a class="btn primary block" href="#client/${c.id}/plan">${icon("pen")} Build the plan</a>` : ""}
+    ${due || type === "followup" ? `<button class="btn ${type === "followup" ? "" : "primary"} block" id="cl-meet">${icon("mic")} ${label}</button>` : `<button class="btn primary block" id="cl-skip">${icon("calendar")} Skip to ${FP.fmtDate(b, c.next.day, { month: "short", day: "numeric" })}</button><button class="btn block" id="cl-meet">${icon("mic")} Meet early</button>`}
+    ${docsLeft && c.meetings.length ? `<button class="btn block" id="cl-docs">${icon("mail")} Email document request (${docsLeft})</button>` : ""}`;
+}
+
+function nextStepHTML_old(c, type) {
   const docsLeft = Clients.docsOf(c).filter((d) => d.status !== "received").length;
   const gaps = [
     [0, "Later this month"],
@@ -166,6 +183,19 @@ function nextStepHTML(c, type) {
   return `${gapSel}<button class="btn primary block" id="cl-meet">${icon("mic")} ${label}</button>${docsLeft && c.meetings.length ? `<button class="btn block" id="cl-docs">${icon("mail")} Email document request (${docsLeft})</button>` : ""}`;
 }
 function wireNextStep(c, type) {
+  document.getElementById("cl-skip")?.addEventListener("click", () => {
+    const b = FP.bookOf(c) || FP.book(c.book || "practice");
+    const days = Math.max(0, (c.next?.day ?? b.day) - b.day);
+    const st = FP.state();
+    if ((c.book || "practice") !== st.mode) {
+      st.mode = c.book || "practice";
+      FP.save(st);
+    }
+    const res = FP.tick(days);
+    toast(`Skipped ${days} day${days === 1 ? "" : "s"}${res.unread ? ` — ${res.unread} new message${res.unread === 1 ? "" : "s"}` : ""}.`);
+    route.keepScroll = true;
+    route();
+  });
   document.getElementById("cl-docs")?.addEventListener("click", () => {
     const got = Clients.requestDocs(c.id);
     const left = Clients.docsOf(Clients.find(c.id)).filter((d) => d.status !== "received").length;
@@ -173,8 +203,9 @@ function wireNextStep(c, type) {
     route.keepScroll = true;
     route();
   });
-  document.getElementById("cl-meet").onclick = () => {
-    const gap = +(document.getElementById("cl-gap")?.value || 0);
+  const meetBtn = document.getElementById("cl-meet");
+  if (meetBtn) meetBtn.onclick = () => {
+    const gap = 0; // time now moves with the calendar (skip day / week / month)
     let events = [];
     if (gap > 0)
       Clients.update(c.id, (x) => {
