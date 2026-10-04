@@ -324,7 +324,115 @@ const Clients = (() => {
       c.partnerStyle = pickR(r, Object.keys(STYLES).filter((x) => x !== c.style));
       c.partnerView = pickR(r, ["wants to spend more on travel now", "wants to pay off debt before anything else", "is much more nervous about investing", "wants to retire earlier", "thinks the kids' college should come first", "wants a bigger house"]);
     }
+    makeFeasible(c);
     return c;
+  }
+
+  // Keep every client's situation workable: a real (small) monthly surplus, a retirement goal that
+  // 401(k)/IRA saving can reach, and other goals a sensible plan can fund with tradeoffs.
+  // sync: also update what the client already told you (used once to repair older clients).
+  // forget: drop the facts that changed so you have to ask again (used after life events).
+  const pmtNeed = (target, start, years, rate) => {
+    const n = Math.max(1, years * 12);
+    const i = rate / 12;
+    const need = Math.max(0, target - start * Math.pow(1 + i, n));
+    return (need * i) / (Math.pow(1 + i, n) - 1);
+  };
+  function makeFeasible(c, opts = {}) {
+    const t = c.truth;
+    const changed = new Set();
+    const minPay = () => t.debts.reduce((n, d) => n + (d.min || 0), 0);
+    const surplus = () => t.takeHome - t.housing - t.living - minPay();
+    if (!c.laidOff) {
+      const want = Math.round(t.takeHome * 0.08);
+      if (surplus() < want) {
+        const nl = Math.max(Math.round((t.takeHome * 0.12) / 10) * 10, Math.round((t.living - (want - surplus())) / 10) * 10);
+        if (nl !== t.living) (t.living = nl), changed.add("living");
+      }
+      let guard = 0;
+      while (surplus() < t.takeHome * 0.05 && t.debts.length && guard++ < 20) {
+        const d = [...t.debts].sort((a, b) => b.min - a.min)[0];
+        d.min = Math.max(35, Math.round((d.min * 0.75) / 5) * 5); // refinanced / lower payment plan
+        changed.add("min-" + d.id);
+      }
+    }
+    t.expenses = t.housing + t.living;
+    t.minPay = minPay();
+    const ret = t.goals.find((g) => g.id === "retire");
+    const cap = (c.income / 12) * 0.18;
+    let guard = 0;
+    while (!opts.cashOnly && !opts.only && ret && pmtNeed(ret.target, (t.k401 || 0) + (t.roth || 0), ret.years, 0.06) > cap && guard++ < 40) {
+      if (ret.years < Math.max(5, 67 - c.age)) {
+        ret.years++;
+        ret.name = ret.name.replace(/\d{2}/, String(c.age + ret.years));
+        changed.add("when-retire");
+      } else (ret.target = Math.round((ret.target * 0.92) / 10000) * 10000), changed.add("goal-retire");
+    }
+    const others = t.goals.filter((g) => g.id !== "retire");
+    const cost = (g) => pmtNeed(g.target, (c.goalBalances || {})[g.id] || 0, g.years, g.years <= 3 ? 0.03 : 0.05);
+    const room = Math.max(0, surplus()) * 1.1;
+    guard = 0;
+    const movable = opts.only ? others.filter((g) => g.id === opts.only) : others;
+    while (!opts.cashOnly && movable.length && others.reduce((n, g) => n + cost(g), 0) > room && guard++ < 600) {
+      const g = [...movable].sort((a, b) => cost(b) - cost(a))[0];
+      if (!g.id.startsWith("college") && g.years < 12) (g.years++, changed.add("when-" + g.id));
+      else if (g.target > 3000) (g.target = Math.max(3000, Math.floor((g.target * 0.9) / 1000) * 1000)), changed.add("goal-" + g.id);
+      else if (opts.only) break;
+      else {
+        const drop = [...others].sort((a, b) => b.priority - a.priority || cost(b) - cost(a))[0];
+        others.splice(others.indexOf(drop), 1);
+        if (movable !== others && movable.includes(drop)) movable.splice(movable.indexOf(drop), 1);
+        t.goals.splice(t.goals.indexOf(drop), 1);
+        changed.add("goal-" + drop.id);
+      }
+    }
+    if (c.collected) {
+      for (const k of changed) {
+        if (!c.collected[k]) continue;
+        if (opts.forget) delete c.collected[k];
+        else if (opts.sync) {
+          const g = t.goals.find((x) => "goal-" + x.id === k || "when-" + x.id === k);
+          const v = k === "living" ? t.living : k.startsWith("min-") ? t.debts.find((d) => "min-" + d.id === k)?.min : g ? (k.startsWith("goal-") ? g.target : g.years) : null;
+          if (v == null) delete c.collected[k];
+          else c.collected[k] = { ...c.collected[k], value: v, quote: "Updated: they went back through their statements and corrected this", approx: false };
+        }
+      }
+    }
+    return [...changed];
+  }
+  // Facts about debts and goals that no longer exist (paid off / dropped) are removed from your notes.
+  function prune(c) {
+    const debtIds = new Set(c.truth.debts.map((d) => d.id));
+    const goalIds = new Set(c.truth.goals.map((g) => g.id));
+    for (const k of Object.keys(c.collected)) {
+      const m = k.match(/^(debt|apr|min)-(.+)$/);
+      if (m && !debtIds.has(m[2])) delete c.collected[k];
+      const g = k.match(/^(goal|when)-(.+)$/);
+      if (g && !goalIds.has(g[2])) delete c.collected[k];
+    }
+  }
+  // What still worries them — based on their situation today (a paid-off card stops being a worry).
+  function worriesNow(c) {
+    const t = c.truth;
+    const ok = (w) =>
+      /credit card/.test(w) ? t.debts.some((d) => d.id === "cc" && d.balance > 0) : /student loans/.test(w) ? t.debts.some((d) => d.id === "student" && d.balance > 0) : /emergency savings/.test(w) ? t.cash < t.expenses : /afford a house/.test(w) ? !t.owns : true;
+    const list = (c.worries || [t.mainWorry]).filter(ok);
+    return list.length ? list : ["not saving enough for retirement"];
+  }
+  // One-time repair for clients created by older versions.
+  function migrate() {
+    const list = all();
+    let dirty = false;
+    for (const c of list) {
+      if ((c.v || 0) >= 2) continue;
+      c.docs = docsOf(c);
+      receiveDocs(c, c.docs.filter((d) => d.status === "received").map((d) => d.name), "backfill");
+      makeFeasible(c, { sync: true });
+      prune(c);
+      c.v = 2;
+      dirty = true;
+    }
+    if (dirty) saveAll(list);
   }
 
   // ---------- the facts a client can share (fields you collect) ----------
@@ -484,6 +592,8 @@ const Clients = (() => {
         const g = opts[Math.floor(Math.random() * opts.length)];
         const goal = { id: g.id, name: g.name, target: Math.round((g.t[0] + Math.random() * (g.t[1] - g.t[0])) / 1000) * 1000, years: g.y[0] + Math.floor(Math.random() * (g.y[1] - g.y[0] + 1)), priority: 4, say: g.say };
         c.truth.goals.push(goal);
+        e.goal = g.id;
+        e.gsay = g.say;
         e.text = `${c.first} has a new goal: ${g.name.toLowerCase()}.`;
         e.say = `I've been thinking about something new — ${g.say.replace("{amt}", "$" + goal.target.toLocaleString()).replace("{yrs}", goal.years).replace(/^./, (x) => x.toLowerCase())}`;
       } },
@@ -529,7 +639,10 @@ const Clients = (() => {
         extra = Math.max(0, extra - Math.max(0, pay - d.min));
         d.balance = Math.max(0, Math.round(d.balance - pay));
       }
-      t.debts = t.debts.filter((d) => d.balance > 0);
+      if (t.debts.some((d) => d.balance <= 0)) {
+        t.debts = t.debts.filter((d) => d.balance > 0);
+        prune(c);
+      }
       t.cash = Math.max(0, Math.round(t.cash + (c.laidOff ? -t.expenses * 0.5 : (plan?.efMonthly || 0) + (plan ? 0 : 50))));
       c.goalBalances ||= {};
       if (plan) for (const [g, v] of Object.entries(plan.goalSavings || {})) c.goalBalances[g] = Math.round(((c.goalBalances[g] || 0) * (1 + ret) + (+v || 0)) * 100) / 100;
@@ -552,7 +665,18 @@ const Clients = (() => {
     }
     if (!e) return null;
     const ev = { id: e.id, month: c.month, day: c.dayNow ?? null, n: e.n ? e.n(r, c) : undefined };
+    const debtsBefore = Object.fromEntries(t.debts.map((d) => [d.id, d.balance]));
     e.apply(c, ev);
+    // Card balances that jumped or vanished: your old numbers are out of date.
+    for (const d of t.debts) if (debtsBefore[d.id] == null || Math.abs(d.balance - debtsBefore[d.id]) > 0.1 * Math.max(500, debtsBefore[d.id])) ["debt-", "min-"].forEach((k) => delete c.collected[k + d.id]);
+    prune(c);
+    makeFeasible(c, { forget: true, cashOnly: !ev.gsay, only: ev.gsay ? ev.goal : null });
+    if (ev.goal && ev.gsay) {
+      const g = t.goals.find((x) => x.id === ev.goal);
+      if (g) ev.say = `I've been thinking about something new — ${ev.gsay.replace("{amt}", "$" + g.target.toLocaleString()).replace("{yrs}", g.years).replace(/^./, (x) => x.toLowerCase())}`;
+      delete ev.gsay;
+      ev.goal = g?.name || ev.goal;
+    }
     ev.text ||= e.text(c, ev);
     ev.say ||= e.say(c, ev);
     t.expenses = t.housing + t.living;
@@ -632,18 +756,21 @@ ${c.couple ? `COUPLES MEETING: your ${c.married ? "spouse" : "partner"} ${c.part
 Money: ${t.owns ? "mortgage" : t.withFamily ? "you live with family and pay" : "rent"} ${usd(t.housing)}/mo; other spending ${usd(t.living)}/mo; cash savings ${usd(t.cash)}; ${t.k401 || t.contrib ? `401(k) ${usd(t.k401)}, contributing ${t.contrib}%${t.match ? `, employer matches up to ${t.match}%` : ", no employer match"}` : "no workplace retirement plan"}; ${t.roth ? "Roth IRA " + usd(t.roth) : "no Roth IRA"}; debts: ${t.debts.map((d) => `${d.name} ${usd(d.balance)} at ${d.apr}% (min ${usd(d.min)}/mo)`).join("; ") || "none"}. Life insurance: ${t.insurance == null ? "only through work" : t.insurance ? "yes" : "none"}.
 Goals you told them about on the intake form: ${t.goals.filter((g) => !g.hidden).map((g) => `${g.name} — about ${usd(g.target)} in ${g.years} years${g.say ? ` (in your words: "${g.say.replace("{amt}", usd(g.target)).replace("{yrs}", g.years)}")` : ""}`).join("; ")}.
 ${surprise.length ? `SURPRISE GOAL(S) you didn't put on the form: ${surprise.map((g) => `${g.name} — about ${usd(g.target)} in ${g.years} years`).join("; ")}. Partway through the conversation (not in your first two replies), bring it up casually on your own, like "Oh — before I forget…". Only mention it once.` : ""}
-Worries: ${(c.worries || [t.mainWorry]).join("; ")}. Main worry: ${t.mainWorry}. Risk attitude (say it like this when asked): "${RISK_SAY[t.risk - 1]}"
+Worries right now: ${worriesNow(c).join("; ")}. Risk attitude (say it like this when asked): "${RISK_SAY[t.risk - 1]}"
 Knowledge level ${t.levels[0]}/5 (1 = asks what basic terms mean). Knows numbers ${t.levels[1]}/5 (low = give rounded guesses like "${v(t.housing)}"). Worry ${t.levels[2]}/5.
 Documents: you brought ${docs.filter((d) => d.status === "brought").map((d) => d.name).join(", ") || "nothing"}; ${docs.filter((d) => d.status === "requested").length ? "you can email the rest (" + docs.filter((d) => d.status === "requested").map((d) => d.name).join(", ") + ") after the meeting if asked" : ""}. If Mason asks for documents, tell him what you brought and promise to send the rest.
 Always say money as digits with a $ sign (like $1,850) and percentages as digits (like 6%), so they come through clearly.
 ${c.pendingEvents.length ? "SINCE THE LAST MEETING: " + c.pendingEvents.map((e) => e.text).join(" ") + " Bring this up early, in your own words." : ""}
+${c.events.length ? `YOUR LIFE SINCE YOU STARTED WITH MASON (all true — never contradict it): ${c.events.map((e) => `${dateOf(c, e.month)}: ${e.text}`).join(" ")}` : ""}
+${Object.keys(c.collected).length ? `WHAT YOU'VE ALREADY TOLD MASON (stay consistent; if something changed since, say it changed): ${Object.entries(c.collected).filter(([k]) => k !== "riskq").slice(0, 24).map(([k, v]) => `${fieldLabel(c, k)}: ${Array.isArray(v.value) ? "questionnaire" : typeof v.value === "number" && !/contrib|match|apr|when/.test(k) ? usd(v.value) : v.value}`).join("; ")}.` : ""}
+Your money above is your situation TODAY. Debts not listed are paid off — never say you still have them.
 ${past ? "Earlier meetings: " + past : ""} Relationship with Mason so far: ${c.relationship}/100 (${c.relationship >= 70 ? "you trust him" : c.relationship >= 45 ? "warming up" : "still guarded"}).
 ${type === "email" ? "You're emailing your planner between meetings. Only mention money details if they're relevant to the email." : type === "presentation" ? "Mason is presenting his financial plan today. Ask about anything unclear, push back if it doesn't fit you, and decide whether you'll follow it." : type === "review" ? "This is a follow-up review. Share updates and ask how you're doing on your goals." : type === "followup" ? "This is a short follow-up call. You already met once; Mason needs a few more details for your plan. Answer what he asks." : "This is your first meeting (discovery). Share details only when asked."}`;
   }
   function scenario(c, type) {
     const p = persona(c);
     const refSay = { "a coworker": "A coworker of mine", "a friend from church": "A friend from church", "their sister": "My sister", "their brother": "My brother", "an online search": "I found you online and", "a neighbor": "My neighbor", "their CPA": "My accountant", "a friend from the gym": "A friend from the gym" }[c.referral] || "A friend";
-    const worry = c.truth.mainWorry.replace(/^the kids'/, "my kids'").replace(/^taking care of an aging parent/, "taking care of my mom").replace(/^starting over financially after the divorce/, "starting over after my divorce").replace(/^whether their savings/, "whether my savings").replace(/^income that's different/, "my income being different");
+    const worry = worriesNow(c)[0].replace(/^the kids'/, "my kids'").replace(/^taking care of an aging parent/, "taking care of my mom").replace(/^starting over financially after the divorce/, "starting over after my divorce").replace(/^whether their savings/, "whether my savings").replace(/^income that's different/, "my income being different");
     const greet = { brief: `Hi. ${c.first}.`, chatty: `Hi! I'm ${c.first} — sorry, traffic was crazy.`, anxious: `Hi, I'm ${c.first}. Sorry, I'm a little nervous about this.`, skeptical: `Hi, I'm ${c.first}. I'll be honest, I've had a bad experience with a "financial advisor" before.`, detailed: `Hi, I'm ${c.first}. I brought some notes.`, upbeat: `Hey! I'm ${c.first}, great to meet you!`, guarded: `Hi. I'm ${c.first}.` }[c.style] || `Hi, I'm ${c.first}.`;
     const opening = {
       discovery: `${greet} ${refSay} said you might be able to help. Honestly, I'm a little worried about ${worry}.`,
@@ -980,20 +1107,84 @@ ${type === "email" ? "You're emailing your planner between meetings. Only mentio
       { id: "next", label: "Schedule the next review", me: /\b(next (review|meeting)|follow up|see you in|check in)\b/i },
     ],
   };
+  // The agenda for THIS client's next meeting: the facts you're missing, the documents still out,
+  // the news they emailed about, and (for presentations) each of their goals.
+  const SEC_ASK = { "Cash flow": "Cash flow", Assets: "Savings", Retirement: "Retirement accounts", Risk: "Risk tolerance", Protection: "Insurance", Debts: "Debts", Goals: "Goals" };
+  const words = (name) => String(name).toLowerCase().replace(/[’']s\b/g, "").split(/[^a-z0-9]+/).filter((w) => w.length > 3 && !/^(with|from|their|before|about|years?|fund|goal|plan|save|amount|away)$/.test(w));
+  function agendaFor(c, type) {
+    const F = fields(c).filter((f) => !c.collected[f.key] && !(c.difficulty === "tough" && f.hidden));
+    const missing = F.filter((f) => !f.hidden && f.key !== "riskq");
+    const docsOut = docsOf(c).filter((d) => d.status !== "received").map((d) => d.name);
+    const news = [...(c.pendingEvents || [])];
+    const gapItems = [...new Set(missing.map((f) => f.sec))].map((sec) => {
+      const keys = missing.filter((f) => f.sec === sec).map((f) => f.key);
+      const labels = missing.filter((f) => f.sec === sec).map((f) => f.label.replace(/^Goal: /, "").replace(/ \/ month$/, "").replace(/ \((amount|years away)\)$/, ""));
+      const head = SEC_ASK[sec] || sec;
+      const body = `${[...new Set(labels)].slice(0, 4).join(", ")}${new Set(labels).size > 4 ? "…" : ""}`;
+      return { id: "gap-" + sec, label: body.toLowerCase().startsWith(head.toLowerCase()) ? body : `${head}: ${body}`, need: keys };
+    });
+    const docItem = docsOut.length ? [{ id: "docs", label: `Collect: ${docsOut.slice(0, 3).join(", ").toLowerCase()}${docsOut.length > 3 ? ` +${docsOut.length - 3} more` : ""}`, me: /\b(documents?|statements?|pay ?stubs?|paperwork|tax return|questionnaire|policy|policies|send (me|over)|email me)\b/i }] : [];
+    const newsItems = news.map((e, i) => ({ id: "news-" + i, label: `Follow up on their news: ${e.text.replace(c.first + "'s ", "their ").replace(c.first + " ", "")}`, me: new RegExp(`\\b(${[...words(e.text), "congrat", "sorry to hear", "how are you holding", "what happened", "tell me (more|about)"].join("|")})`, "i") }));
+    if (type === "followup")
+      return [
+        { id: "reconnect", label: "Reconnect briefly", me: /\b(thanks|good to (hear|talk|see)|how are you|how have you been)\b/i },
+        ...newsItems,
+        ...(gapItems.length ? gapItems : [{ id: "confirm", label: "Confirm nothing has changed", me: /\b(anything (else|new)|changed|still the same|confirm)\b/i }]),
+        ...docItem,
+        { id: "anything", label: "Ask if there's anything else on their mind", me: /\b(anything else|any other|forgot|missing|on your mind)\b/i },
+        { id: "next", label: c.plan?.submittedAt ? "Set up the plan presentation" : "Tell them you'll build the plan and present it", me: /\b(next (step|meeting|time)|present|plan together|go over the plan|follow up|put together|build)\b/i },
+      ];
+    if (type === "review") {
+      const recheck = gapItems.filter((g) => !/^gap-Goals$/.test(g.id));
+      return [
+        { id: "changes", label: news.length ? "Open: ask how things are going" : "What's changed in their life?", me: /\b(what('s| has) changed|anything new|since we|update|how have you been|how's|how are)\b/i },
+        ...newsItems,
+        ...recheck.map((g) => ({ ...g, label: "Re-check " + g.label })),
+        ...c.truth.goals.filter((g) => !g.hidden && c.collected["goal-" + g.id]).slice(0, 4).map((g) => ({ id: "prog-" + g.id, label: `Progress: ${g.name}`, me: new RegExp(`\\b(${words(g.name).join("|") || "goal"})`, "i") })),
+        ...(c.truth.debts.length && c.collected[`debt-${c.truth.debts[0].id}`] ? [{ id: "debts", label: "Debt progress", me: /\b(debt|card|loan|balance)\b/i }] : []),
+        { id: "invest", label: "Portfolio & rebalancing", me: /\b(portfolio|rebalanc|market|stocks?|invest)\b/i },
+        { id: "personal", label: "Remember personal details", personal: true },
+        ...docItem,
+        { id: "adjust", label: "Adjust the plan", me: /\b(adjust|change the plan|increase|lower|update the plan|instead)\b/i },
+        { id: "next", label: "Schedule the next review", me: /\b(next (review|meeting)|follow up|see you in|check in)\b/i },
+      ];
+    }
+    if (type === "presentation") {
+      const p = c.plan || {};
+      const goals = collectedGoals(c).filter((g) => g.target != null);
+      return [
+        { id: "recap", label: "Recap their goals & situation", me: /\b(recap|last time|you told me|you mentioned|your goals?)\b/i },
+        ...newsItems,
+        ...(p.efMonthly ? [{ id: "ef", label: `Emergency fund: ${usd(p.efMonthly)}/mo`, me: /\bemergency|rainy day|cushion\b/i }] : []),
+        ...(p.extraDebt ? [{ id: "debt", label: `Debt payoff: extra ${usd(p.extraDebt)}/mo (${p.debtStrategy === "snowball" ? "snowball" : "highest rate first"})`, me: /\b(debt|pay off|avalanche|snowball|card|loan)\b/i }] : []),
+        { id: "retire", label: p.k401Pct != null ? `Retirement: ${p.k401Pct}% to the 401(k)` : "Retirement & employer match", me: /\b(401|match|retire)\b/i },
+        { id: "invest", label: p.alloc ? `Investment mix: ${p.alloc.stocks}% stocks / ${p.alloc.bonds}% bonds — why it fits` : "Investment mix & why it fits", me: /\b(stocks?|bonds?|portfolio|invest|allocation|mix|risk)\b/i },
+        ...goals.filter((g) => g.id !== "retire").slice(0, 5).map((g) => ({ id: "g-" + g.id, label: `Goal: ${g.name}${p.goalSavings?.[g.id] ? ` — ${usd(+p.goalSavings[g.id])}/mo` : ""}`, me: new RegExp(`\\b(${words(g.name).join("|") || "goal"})`, "i") })),
+        { id: "check", label: "Check understanding & comfort", me: /\b(make sense|questions|comfortable|how do you feel|does that|sound good|thoughts)\b/i },
+        { id: "next", label: "Implementation steps & next review", me: /\b(next step|set up|open|start|review|follow up|in (three|3|six|6) months)\b/i },
+      ];
+    }
+    return AGENDA.discovery.filter((a) => a.id !== "docs" || docsOut.length);
+  }
   // Live agenda status for a meeting in progress.
   function agendaStatus(c, type, thread) {
-    const found = { ...c.collected, ...extract(c, thread) };
+    const now = extract(c, thread);
+    const found = { ...c.collected, ...now };
     const mine = thread.filter((t) => t.from === "me").map((t) => t.text).join(" ");
     const before = c.meetings;
-    return (AGENDA[type] || AGENDA.discovery).map((a) => {
+    return agendaFor(c, type).map((a) => {
       let done = false;
+      if (a.need) {
+        const got = a.need.filter((k) => now[k]).length;
+        done = got >= Math.min(a.need.length, Math.max(1, Math.ceil(a.need.length * 0.6)));
+        return { ...a, done, progress: `${got}/${a.need.length}` };
+      }
       if (a.keys) done = Object.keys(found).some((k) => a.keys.test(k));
       if (!done && a.me) done = a.me.test(mine);
       if (a.personal) done = before.length > 0 && remembered(c, thread, before).length > 0;
-      if (a.gaps) done = Object.keys(extract(c, thread)).length >= 2;
       return { ...a, done };
     });
   }
 
-  return { notesFor: (c) => hiddenNotes(c, "email"), EVENTS, lifeEvent, MEETING_NAME, requestDocs, docsOf, STYLES, AGENDA, agendaStatus, all, find, update, saveAll, generate, fields, extract, advance, dateOf, persona, meetingType, scenario, recordMeeting, known, payoff, monteCarlo, needed90, mix, RISK_QS, MODELS, riskScore, STRESS, stress, jobLossRunway, compliance, grade, usd, pctS, val, fieldLabel, collectedGoals };
+  return { migrate, makeFeasible, worriesNow, agendaFor, notesFor: (c) => hiddenNotes(c, "email"), EVENTS, lifeEvent, MEETING_NAME, requestDocs, docsOf, STYLES, AGENDA, agendaStatus, all, find, update, saveAll, generate, fields, extract, advance, dateOf, persona, meetingType, scenario, recordMeeting, known, payoff, monteCarlo, needed90, mix, RISK_QS, MODELS, riskScore, STRESS, stress, jobLossRunway, compliance, grade, usd, pctS, val, fieldLabel, collectedGoals };
 })();

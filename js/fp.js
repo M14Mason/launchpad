@@ -86,6 +86,45 @@ const FP = (() => {
     big_up: ["Stocks surge as the Fed signals rate cuts", "Best day in months as earnings beat expectations", "Rally broadens as recession fears fade"],
   };
 
+  // Made-up (but realistic) reasons the market moved, so you can explain a day to a client.
+  const DRIVERS = [
+    { id: "cpi", topic: "the latest inflation report", up: ["inflation cooled more than expected", "This month's inflation report (CPI) came in below forecasts. Investors now expect the Fed can cut interest rates sooner — and lower rates make companies' future profits worth more today."], down: ["inflation ran hotter than expected", "This month's inflation report (CPI) came in above forecasts. Investors now expect interest rates to stay high for longer, which weighs on both stock and bond prices."], lead: ["Real estate", "Tech"], lag: ["Energy", "Consumer staples"] },
+    { id: "fed", topic: "comments from the Fed", up: ["the Fed hinted at rate cuts", "The Federal Reserve chair said the economy is cooling enough that rate cuts could come this year. Cheaper borrowing helps businesses and consumers."], down: ["the Fed signaled rates stay high", "Fed officials said they're in no hurry to cut rates. Higher rates for longer mean more expensive loans and pricier mortgages, so investors trimmed risk."], lead: ["Small caps", "Homebuilders"], lag: ["Banks", "Utilities"] },
+    { id: "jobs", topic: "the jobs report", up: ["a solid jobs report", "Employers added more jobs than expected while wage growth stayed moderate — a 'just right' report that suggests the economy is healthy without overheating."], down: ["a weak jobs report", "Hiring slowed sharply and unemployment ticked up, raising worries that a slowdown or recession is coming."], lead: ["Industrials", "Retail"], lag: ["Travel", "Small caps"] },
+    { id: "earn", topic: "tech earnings", up: ["big tech earnings beat forecasts", "Several of the largest tech companies reported profits well above expectations, driven by cloud and AI demand. Because they're a big part of the index, their gains lifted the whole market."], down: ["disappointing tech earnings", "A few of the largest tech companies warned that sales will grow more slowly. Because they're a big share of the index, their drop pulled the whole market down."], lead: ["Semiconductors", "Software"], lag: ["Media", "Hardware"] },
+    { id: "oil", topic: "swings in oil prices", up: ["falling oil prices", "Oil prices dropped on higher supply, which lowers costs for airlines, shippers and drivers — and eases inflation worries."], down: ["an oil price spike", "Oil jumped on supply disruptions overseas. Higher fuel costs squeeze company profits and consumers' budgets, and can push inflation up."], lead: ["Airlines", "Energy"], lag: ["Energy", "Airlines"] },
+    { id: "yields", topic: "moves in bond yields", up: ["bond yields eased", "Interest rates on 10-year Treasury bonds fell, making stocks look more attractive by comparison and lowering borrowing costs."], down: ["bond yields jumped", "The 10-year Treasury yield rose sharply. When safe bonds pay more, investors demand more from stocks, so stock prices fall — and existing bond prices fall too."], lead: ["Tech", "Real estate"], lag: ["Real estate", "Utilities"] },
+    { id: "retail", topic: "retail sales", up: ["strong consumer spending", "Retail sales came in strong — people are still spending, which supports company profits since consumer spending drives about two-thirds of the economy."], down: ["consumers pulled back", "Retail sales fell unexpectedly, a sign households are feeling squeezed. Less spending means lower profits ahead."], lead: ["Retail", "Restaurants"], lag: ["Retail", "Autos"] },
+    { id: "geo", topic: "news from overseas", up: ["easing tensions overseas", "Talks between major governments made progress, calming fears about trade disruptions and conflict."], down: ["rising tensions overseas", "Escalating conflict overseas made investors nervous about trade and supply chains. Investors moved toward safer assets like Treasury bonds and gold."], lead: ["Industrials", "Defense"], lag: ["Travel", "Chipmakers"] },
+    { id: "banks", topic: "bank earnings", up: ["strong bank earnings", "Big banks reported healthy profits and fewer bad loans — a sign borrowers are doing fine."], down: ["worries about bank loans", "A regional bank reported bigger losses on commercial real estate loans, sparking worries about other lenders."], lead: ["Banks", "Insurers"], lag: ["Regional banks", "Real estate"] },
+    { id: "ai", topic: "AI spending", up: ["excitement over AI spending", "A major chipmaker raised its forecast on surging demand for AI data centers, lifting the many companies that supply them."], down: ["doubts about AI spending", "Investors questioned whether companies' huge AI spending will pay off, and highly valued AI stocks fell the most."], lead: ["Semiconductors", "Utilities"], lag: ["Semiconductors", "Software"] },
+    { id: "housing", topic: "housing data", up: ["a pickup in housing", "Home sales and builder confidence rose as mortgage rates dipped."], down: ["a housing slowdown", "Home sales fell to a multi-year low as high mortgage rates kept buyers away."], lead: ["Homebuilders", "Home improvement"], lag: ["Homebuilders", "Banks"] },
+  ];
+  const EXPLAIN = {
+    big_down: "Talking point: days like this happen a few times a year. Their plan already assumes drops like this — selling now would lock in the loss and miss the rebound. Their emergency fund means they won't have to sell.",
+    down: "Talking point: normal day-to-day noise. A diversified, long-term plan doesn't react to single days.",
+    flat: "Talking point: nothing to do — quiet days are most days.",
+    up: "Talking point: nice, but one good day doesn't change the plan. Stay diversified and keep contributing.",
+    big_up: "Talking point: great day — but don't chase it. Big up days often come right after big down days, which is why staying invested matters.",
+  };
+  function newsFor(b, day, chg) {
+    const r = rngD(b.start / 1000 + day * 977);
+    const key = chg < -0.02 ? "big_down" : chg < -0.004 ? "down" : chg < 0.004 ? "flat" : chg < 0.02 ? "up" : "big_up";
+    const d = DRIVERS[Math.floor(r() * DRIVERS.length)];
+    const dir = chg >= 0 ? "up" : "down";
+    const pct = Math.abs(chg * 100).toFixed(1) + "%";
+    const verb = { big_down: pick(r, ["Stocks tumble", "Stocks sink", "Markets slide"]), down: pick(r, ["Stocks dip", "Stocks slip", "Markets edge lower"]), flat: pick(r, ["Stocks drift", "Markets end mixed", "Stocks little changed"]), up: pick(r, ["Stocks rise", "Stocks gain", "Markets climb"]), big_up: pick(r, ["Stocks surge", "Stocks rally", "Markets soar"]) }[key];
+    const [why, more] = d[dir];
+    return {
+      key,
+      head: key === "flat" ? `${verb} as investors weigh ${d.topic}` : `${verb} ${pct} on ${why}`,
+      why: key === "flat" ? `Investors were digesting ${d.topic}, but good and bad news roughly canceled out, so the market ended about where it started.` : more,
+      leaders: dir === "up" ? d.lead[0] : d.lead[1],
+      laggards: dir === "up" ? d.lag[0] : d.lag[1],
+      explain: EXPLAIN[key],
+    };
+  }
+
   // ---------- the clock ----------
   function tick(days, mode = state().mode || "practice") {
     const b = book(mode);
@@ -95,14 +134,20 @@ const FP = (() => {
       const r = rngD(b.start / 1000 + b.day * 131);
       const m = b.market;
       // Daily market: small moves, with an occasional shock.
+      // Markets are closed on weekends.
+      const wd = new Date(b.start + b.day * 86400000).getDay();
+      const open = wd !== 0 && wd !== 6;
       let rs = 0.00035 + 0.0105 * gauss(r);
       if (r() < 0.012) rs = -(0.03 + r() * 0.04);
       if (r() < 0.008) rs = 0.025 + r() * 0.03;
       const rb = 0.00015 + 0.0028 * gauss(r);
-      m.idx = Math.max(500, m.idx * (1 + rs));
-      m.bond = m.bond * (1 + rb);
-      m.hist.push({ day: b.day, v: Math.round(m.idx * 100) / 100, chg: rs });
-      m.hist = m.hist.slice(-400);
+      if (!open) rs = 0;
+      else {
+        m.idx = Math.max(500, m.idx * (1 + rs));
+        m.bond = m.bond * (1 + rb);
+        m.hist.push({ day: b.day, v: Math.round(m.idx * 100) / 100, chg: rs, bchg: rb });
+        m.hist = m.hist.slice(-400);
+      }
       const clients = clientsIn(mode);
       // Monthly: every client's money moves forward (markets, payments, life events).
       if (b.day % 30 === 0) {
@@ -324,7 +369,7 @@ Return ONLY JSON: {"reply": "...", "asksQuestion": true/false}`,
     FPDock.render();
   }
 
-  return { ROLES, TEAM, state, save, book, setBook, bookOf, dateFor, fmtDate, clientsIn, tick, push, acceptLead, afterMeeting, reply, scoreReply, HEADLINES };
+  return { ROLES, TEAM, state, save, book, setBook, bookOf, dateFor, fmtDate, clientsIn, tick, push, acceptLead, afterMeeting, reply, scoreReply, HEADLINES, newsFor };
 })();
 
 // =============== screens ===============
@@ -333,6 +378,7 @@ function renderFP(arg = "") {
   const [sub, x] = arg.split("/");
   if (sub === "mode" || !s.mode) return renderFPMode();
   if (sub === "exam") return renderFPExam(x || "sie");
+  Clients.migrate();
   const mode = s.mode;
   const b = FP.book(mode);
   if (mode === "career" && !b.started) {
@@ -366,7 +412,7 @@ function renderFP(arg = "") {
     }
     <div class="two-col">
       <section class="card"><div class="section-head"><h2>Upcoming</h2><span class="small muted">${FP.fmtDate(b, b.day, { weekday: "long", month: "long", day: "numeric" })}</span></div>
-        ${agenda.length ? `<div class="list compact">${agenda.slice(0, 8).map((c) => `<a class="list-row" href="#client/${c.id}"><span class="pill ${c.next.day < b.day ? "pill-urgent" : c.next.day === b.day ? "good" : ""}">${c.next.day < b.day ? "Overdue" : c.next.day === b.day ? "Today" : FP.fmtDate(b, c.next.day)}</span><div class="grow"><div class="row-title">${esc(c.first)} ${esc(c.last)}</div><div class="small muted">${c.next.annual ? "Annual review" : Clients.MEETING_NAME[c.next.type]}</div></div><span class="chev">›</span></a>`).join("")}</div>` : `<p class="small muted">${mode === "practice" ? "Add a client to get started." : "Check your messages for leads."}</p>`}</section>
+        ${agenda.length ? `<div class="list compact">${agenda.slice(0, 8).map((c) => `<a class="list-row" href="#client/${c.id}"><span class="pill ${c.next.day < b.day ? "pill-urgent" : c.next.day === b.day ? "good" : ""}">${c.next.day < b.day ? "Overdue" : c.next.day === b.day ? "Today" : FP.fmtDate(b, c.next.day)}</span><div class="grow"><div class="row-title">${esc(c.first)} ${esc(c.last)}</div><div class="small muted">${c.next.annual ? "Annual review" : Clients.MEETING_NAME[c.next.type]}${c.next.type === "presentation" && !c.plan?.submittedAt ? ` · <span class="warn-text">plan not built yet</span>` : ""}</div></div><span class="chev">›</span></a>`).join("")}</div>` : `<p class="small muted">${mode === "practice" ? "Add a client to get started." : "Check your messages for leads."}</p>`}</section>
       <section class="card"><h2>Exams</h2><p class="small muted">Practice licensing exams, with questions built from your own clients.</p><div class="row"><a class="btn" href="#fp/exam/sie">${icon("award")} SIE practice${s.exams.sie?.passed ? " ✓" : ""}</a><a class="btn" href="#fp/exam/cfp">${icon("award")} CFP-style practice${s.exams.cfp?.passed ? " ✓" : ""}</a></div></section>
     </div>
     <div class="pipeline">${STAGES.map(([k, l]) => `<div class="pipe-col"><div class="spread"><strong>${l}</strong><span class="pill">${list.filter((c) => c.stage === k).length}</span></div></div>`).join("")}</div>
@@ -541,27 +587,57 @@ const FPDock = {
     el.querySelectorAll("[data-msg]").forEach((x) => x.addEventListener("click", () => ((this.open = x.dataset.msg), this.render())));
   },
   markets(b, el) {
-    const h = b.market.hist;
+    const m = b.market;
+    const h = m.hist;
+    if (!h.length) return (el.innerHTML = `<p class="small muted ph-empty">Markets open tomorrow — skip a day.</p>`);
+    const RANGES = [["1W", 5], ["1M", 21], ["3M", 63], ["1Y", 252]];
+    const range = RANGES.find((x) => x[0] === this.mkRange) || RANGES[1];
+    const sel = h.find((x) => x.day === this.mkDay) || h[h.length - 1];
     const today = h[h.length - 1];
-    const chg = today.chg || 0;
-    const key = chg < -0.02 ? "big_down" : chg < -0.004 ? "down" : chg < 0.004 ? "flat" : chg < 0.02 ? "up" : "big_up";
-    const head = FP.HEADLINES[key][b.day % FP.HEADLINES[key].length];
-    const pts = h.slice(-30).map((x) => x.v);
-    const min = Math.min(...pts);
-    const max = Math.max(...pts);
-    const path = pts.map((v, i) => `${i ? "L" : "M"}${(i / Math.max(1, pts.length - 1)) * 200} ${50 - ((v - min) / (max - min || 1)) * 46}`).join(" ");
+    const chg = sel.chg || 0;
+    const n = FP.newsFor(b, sel.day, chg);
+    // Line: the index over the chosen range (each point is one trading day's close).
+    const pts = h.slice(-range[1] - 1);
+    const lo = Math.min(...pts.map((x) => x.v));
+    const hi = Math.max(...pts.map((x) => x.v));
+    const W = 240, H = 70;
+    const X = (i) => (i / Math.max(1, pts.length - 1)) * W;
+    const Y = (v) => H - 4 - ((v - lo) / (hi - lo || 1)) * (H - 10);
+    const line = pts.map((x, i) => `${i ? "L" : "M"}${X(i).toFixed(1)} ${Y(x.v).toFixed(1)}`).join(" ");
+    const up = pts[pts.length - 1].v >= pts[0].v;
+    const rangeChg = pts[pts.length - 1].v / pts[0].v - 1;
+    const si = pts.indexOf(sel);
+    // Bars: each day's return over the last 20 days — tap one to read why it moved.
+    const bars = h.slice(-20);
+    const bmax = Math.max(0.01, ...bars.map((x) => Math.abs(x.chg || 0)));
+    const bw = W / bars.length;
+    const pctS = (x) => `${x >= 0 ? "+" : ""}${(x * 100).toFixed(2)}%`;
     const clients = FP.clientsIn(b.mode);
-    el.innerHTML = `<div class="mk"><div class="small muted">Market index</div><div class="mk-v">${today.v.toLocaleString(undefined, { maximumFractionDigits: 0 })} <span class="${chg >= 0 ? "good-text" : "bad-text"}">${chg >= 0 ? "+" : ""}${(chg * 100).toFixed(2)}%</span></div>
-      <svg viewBox="0 0 200 52" class="mk-spark"><path d="${path}" class="${pts[pts.length - 1] >= pts[0] ? "up" : "down"}"/></svg>
-      <div class="mk-head">${esc(head)}</div>
-      <div class="small muted mt-s">Your clients today</div>
+    const dayOf = (d) => FP.fmtDate(b, d, { weekday: "short", month: "short", day: "numeric" });
+    el.innerHTML = `<div class="mk">
+      <div class="mk-top"><div><div class="small muted">Market index · ${sel === today ? "today" : dayOf(sel.day)}</div><div class="mk-v">${sel.v.toLocaleString(undefined, { maximumFractionDigits: 0 })} <span class="${chg >= 0 ? "good-text" : "bad-text"}">${pctS(chg)}</span></div></div>
+        <div class="mk-ranges">${RANGES.map(([l]) => `<button data-rg="${l}" class="${l === range[0] ? "on" : ""}">${l}</button>`).join("")}</div></div>
+      <svg viewBox="0 0 ${W} ${H}" class="mk-line ${up ? "up" : "down"}" preserveAspectRatio="none"><path class="area" d="${line} L${W} ${H} L0 ${H} Z"/><path class="ln" d="${line}"/>${si >= 0 ? `<circle cx="${X(si).toFixed(1)}" cy="${Y(sel.v).toFixed(1)}" r="3.2"/>` : ""}</svg>
+      <div class="small muted mk-cap">${range[0]}: <span class="${rangeChg >= 0 ? "good-text" : "bad-text"}">${pctS(rangeChg)}</span></div>
+      <div class="small muted mt-s">Daily moves (tap a day)</div>
+      <svg viewBox="0 0 ${W} 54" class="mk-bars" preserveAspectRatio="none">${bars.map((x, i) => { const v = x.chg || 0; const hgt = Math.max(1.5, (Math.abs(v) / bmax) * 24); return `<rect data-day="${x.day}" x="${(i * bw + 1.5).toFixed(1)}" y="${v >= 0 ? 27 - hgt : 27}" width="${(bw - 3).toFixed(1)}" height="${hgt.toFixed(1)}" class="${v >= 0 ? "up" : "down"} ${x.day === sel.day ? "sel" : ""}"/>`; }).join("")}<line x1="0" x2="${W}" y1="27" y2="27"/></svg>
+      <div class="mk-news"><div class="mk-head">${esc(n.head)}</div><p class="small">${esc(n.why)}</p>
+        <div class="small"><span class="good-text">▲ ${esc(n.leaders)}</span> · <span class="bad-text">▼ ${esc(n.laggards)}</span> · Bonds <span class="${(sel.bchg || 0) >= 0 ? "good-text" : "bad-text"}">${pctS(sel.bchg || 0)}</span></div>
+        <p class="small muted mk-explain">${esc(n.explain)}</p></div>
+      <div class="small muted mt-s">Your clients ${sel === today ? "today" : "that day"}</div>
       ${clients.length ? clients.map((c) => {
-        const v = c.portfolio[c.portfolio.length - 1]?.value || 0;
-        const a = c.plan?.alloc || { stocks: 70, bonds: 25 };
-        const dv = v * chg * (a.stocks / 100);
-        const flags = [c.next && c.next.day <= b.day ? "meeting due" : "", b.inbox.some((m) => m.clientId === c.id && m.needsReply && !m.replied) ? "needs reply" : "", c.relationship < 35 ? "unhappy" : ""].filter(Boolean);
-        return `<a class="mk-row" href="#client/${c.id}"><span class="grow">${esc(c.first)} ${esc(c.last)}${flags.length ? `<span class="small warn-text"> · ${flags.join(", ")}</span>` : ""}</span><span class="${dv >= 0 ? "good-text" : "bad-text"}">${dv >= 0 ? "+" : "-"}${Clients.usd(Math.abs(dv))}</span></a>`;
+        const a = c.plan?.alloc || { stocks: 70, bonds: 25, cash: 5 };
+        const base = c.portfolio[c.portfolio.length - 1]?.value || 0;
+        // Value moves with the market every day since the last monthly statement.
+        const grow = (a.stocks / 100) * (m.idx / (m.monthIdx || m.idx) - 1) + (a.bonds / 100) * (m.bond / (m.monthBond || m.bond) - 1);
+        const v = base * (1 + grow);
+        const dayRet = (a.stocks / 100) * chg + (a.bonds / 100) * (sel.bchg || 0);
+        const dv = v * dayRet;
+        const flags = [c.next && c.next.day <= b.day ? "meeting due" : "", b.inbox.some((x) => x.clientId === c.id && x.needsReply && !x.replied) ? "needs reply" : "", c.relationship < 35 ? "unhappy" : ""].filter(Boolean);
+        return `<a class="mk-row" href="#client/${c.id}"><span class="grow">${esc(c.first)} ${esc(c.last)}<span class="small muted"> · ${Clients.usd(v)}</span>${flags.length ? `<span class="small warn-text"> · ${flags.join(", ")}</span>` : ""}</span><span class="${dv >= 0 ? "good-text" : "bad-text"}">${dv >= 0 ? "+" : "-"}${Clients.usd(Math.abs(dv))}<span class="small"> ${pctS(dayRet)}</span></span></a>`;
       }).join("") : `<p class="small muted">No clients yet.</p>`}</div>`;
+    el.querySelectorAll("[data-rg]").forEach((x) => x.addEventListener("click", () => ((this.mkRange = x.dataset.rg), this.render())));
+    el.querySelectorAll("[data-day]").forEach((x) => x.addEventListener("click", () => ((this.mkDay = +x.dataset.day === today.day ? null : +x.dataset.day), this.render())));
   },
 };
 

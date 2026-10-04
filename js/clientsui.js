@@ -118,6 +118,7 @@ function journey(c) {
 }
 function renderClient(arg) {
   const [id, tab = "overview"] = arg.split("/");
+  Clients.migrate();
   const c = Clients.find(id);
   if (!c) return (app.innerHTML = empty(`Client not found. <a href="#clients">Client book</a>`));
   c.docs = Clients.docsOf(c);
@@ -159,7 +160,9 @@ function nextStepHTML(c, type) {
   const when = due ? (c.next.day < b.day ? `<span class="bad-text">Overdue since ${FP.fmtDate(b, c.next.day)}</span>` : `<span class="good-text">Today</span>`) : `Scheduled ${FP.fmtDate(b, c.next.day, { weekday: "short", month: "short", day: "numeric" })}`;
   const docsLeft = Clients.docsOf(c).filter((d) => d.status !== "received").length;
   const label = { discovery: "Start discovery meeting", followup: "Follow-up call to fill gaps", presentation: "Present your plan", review: c.next.annual ? "Annual review" : "Quarterly review" }[type];
-  return `<div class="small">${when}</div>
+  const noPlan = type === "followup" && c.next.type === "presentation";
+  return `<div class="small">${when}${noPlan ? ` · Plan presentation` : ""}</div>
+    ${noPlan ? `<div class="small warn-text">Build and submit the plan first — until then this meeting is a follow-up call, not the presentation.</div>` : ""}
     ${type === "followup" ? `<a class="btn primary block" href="#client/${c.id}/plan">${icon("pen")} Build the plan</a>` : ""}
     ${due || type === "followup" ? `<button class="btn ${type === "followup" ? "" : "primary"} block" id="cl-meet">${icon("mic")} ${label}</button>` : `<button class="btn primary block" id="cl-skip">${icon("calendar")} Skip to ${FP.fmtDate(b, c.next.day, { month: "short", day: "numeric" })}</button><button class="btn block" id="cl-meet">${icon("mic")} Meet early</button>`}
     ${docsLeft && c.meetings.length ? `<button class="btn block" id="cl-docs">${icon("mail")} Email document request (${docsLeft})</button>` : ""}`;
@@ -304,13 +307,13 @@ function clData(c, el) {
           .map((f) => {
             const got = c.collected[f.key];
             const man = c.manual?.[f.key];
-            return `<div class="data-row ${got ? "got" : "miss"}"><div class="grow"><strong>${esc(f.label)}</strong>${got ? `<div class="small muted">${got.doc ? `${icon("file")} ${esc(got.doc)}` : `“${esc(got.quote)}” — meeting ${got.meeting}`}${got.approx ? " · approximate" : ""}</div>` : tough ? `<div class="small muted">Not collected — fill it in if you can justify it.</div>` : `<div class="small warn-text">Ask next meeting</div>`}</div>
+            return `<div class="data-row ${got ? "got" : "miss"}"><div class="grow"><strong>${esc(f.label)}</strong>${got ? `<div class="small muted">${got.doc ? `${icon("file")} ${esc(got.doc)}` : `“${esc(got.quote)}” — meeting ${got.meeting}`}${got.approx ? " · approximate" : ""}</div>` : f.key === "riskq" ? `<div class="small warn-text">It's a document: ask them to send it (Email document request, or ask for it in a meeting)</div>` : tough ? `<div class="small muted">Not collected — fill it in if you can justify it.</div>` : `<div class="small warn-text">Ask next meeting</div>`}</div>
               <div class="data-val">${got ? fmt(f, got.value) : tough && f.num != null ? `<input class="mini-field" type="number" step="any" data-man="${f.key}" value="${man ?? ""}" placeholder="?">` : "—"}</div></div>`;
           })
           .join("")}</section>`;
       })
       .join("")}
-    ${!tough && missing.length ? `<section class="card"><h2>Next meeting agenda</h2><ul>${[...new Set(missing.map((f) => f.sec))].map((s) => `<li><strong>${s}:</strong> ${missing.filter((f) => f.sec === s).map((f) => esc(f.label.replace(/^Goal: /, ""))).join(", ")}</li>`).join("")}</ul></section>` : ""}`;
+    ${!tough && c.meetings.length ? `<section class="card"><h2>Next meeting agenda</h2><p class="small muted">${Clients.MEETING_NAME[Clients.meetingType(c)]}</p><ul>${Clients.agendaFor(c, Clients.meetingType(c)).map((a) => `<li>${esc(a.label)}</li>`).join("")}</ul></section>` : ""}`;
   document.getElementById("cl-show")?.addEventListener("click", () => ((clData.show = !show), clData(c, el)));
   el.querySelectorAll("[data-man]").forEach((inp) =>
     inp.addEventListener("change", () =>
@@ -606,7 +609,8 @@ function renderClientBrief() {
       <div class="ps-stage"><div class="orb-host" id="ps-orb"></div></div></section>
     <div class="practice-setup"><section class="card"><h2>Your agenda</h2>
       ${c.pendingEvents.length ? `<div class="notice warn">${icon("alert")} Something changed since your last meeting — let ${esc(c.first)} tell you about it.</div>` : ""}
-      ${m.type === "discovery" ? `<p class="small">Collect what you still need${c.difficulty === "tough" ? "" : ":"}</p>${c.difficulty === "tough" ? `<p class="small muted">Tough client — no checklist. Cover cash flow, debts, savings, retirement, goals, risk and protection.</p>` : `<ul class="small">${[...new Set(missing.map((f) => f.sec))].map((s) => `<li>${s}</li>`).join("")}</ul>`}` : m.type === "presentation" ? `<p class="small">Present your plan (grade ${c.plan?.grade?.total ?? "—"}/100): explain each step simply, connect it to their goals, check they're comfortable.</p>` : `<p class="small">Ask what's changed, review progress, update goals, and adjust the plan.</p>`}
+      ${m.type === "presentation" ? `<p class="small">Present your plan (grade ${c.plan?.grade?.total ?? "—"}/100) in plain English and connect each step to their goals.</p>` : ""}
+      ${c.difficulty === "tough" && m.type !== "presentation" ? `<p class="small muted">Tough client — no checklist. Cover cash flow, debts, savings, retirement, goals, risk and protection, and anything new.</p>` : `<ul class="small agenda-list">${Clients.agendaFor(c, m.type).map((a) => `<li>${esc(a.label)}</li>`).join("")}</ul>`}
       <label class="field"><span>Length</span><div class="segmented">${LENGTHS.map(([v, l]) => `<button data-min="${v}" class="${(P.opts.minutes || 8) === v ? "on" : ""}">${l}</button>`).join("")}</div></label>
       ${AI.enabled() ? "" : `<p class="small muted">No Claude key: ${esc(c.first)} is played by the built-in partner (answers from their file).</p>`}
       </section><section class="card"><details class="ps-mic"><summary>${icon("mic")} Mic & voice settings</summary>${micCheckHTML()}</details></section></div>
@@ -683,7 +687,7 @@ function deskRefresh() {
   if (window.gsap && !Motion.reduced) fresh.forEach((f) => gsap.fromTo(facts.querySelector(`[data-fk="${f.key}"]`), { backgroundColor: "rgba(34,197,94,.25)" }, { backgroundColor: "rgba(34,197,94,0)", duration: 1.6 }));
   const ag = Clients.agendaStatus(c, P.sc.meetingType, P.thread);
   const prev = deskRefresh.done || {};
-  document.getElementById("desk-agenda").innerHTML = `<div class="agenda">${ag.map((a) => `<div class="ag-row ${a.done ? "done" : ""}" data-ag="${a.id}"><span class="ag-check">${a.done ? icon("check") : ""}</span>${esc(a.label)}</div>`).join("")}</div><div class="small muted mt-s">${ag.filter((a) => a.done).length}/${ag.length} covered</div>`;
+  document.getElementById("desk-agenda").innerHTML = `<div class="agenda">${ag.map((a) => `<div class="ag-row ${a.done ? "done" : ""}" data-ag="${a.id}"><span class="ag-check">${a.done ? icon("check") : ""}</span>${esc(a.label)}${a.progress && !a.done ? ` <span class="muted">${a.progress}</span>` : ""}</div>`).join("")}</div><div class="small muted mt-s">${ag.filter((a) => a.done).length}/${ag.length} covered</div>`;
   if (window.gsap && !Motion.reduced) ag.filter((a) => a.done && !prev[a.id]).forEach((a) => gsap.fromTo(document.querySelector(`[data-ag="${a.id}"] .ag-check`), { scale: 0.3 }, { scale: 1, duration: 0.5, ease: "back.out(3)" }));
   deskRefresh.done = Object.fromEntries(ag.map((a) => [a.id, a.done]));
 }
