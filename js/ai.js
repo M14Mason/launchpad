@@ -431,7 +431,7 @@ Return ONLY JSON:
             ? "This has run long: wrap up naturally now and set end to true."
             : "Keep the conversation moving; only end early if it has truly reached a natural close.";
     const roleRules = {
-      fpclient: `As the client: follow the planner's lead. When Mason changes topics, engage fully with the new topic. Once he has acknowledged or addressed a worry, let it go — never bring the same worry up more than once more, and only if he ignored it completely. Share details when asked, in the way your knowledge level suggests (if he uses jargon you wouldn't know, ask what it means). Let your stress show in tone, not by derailing the meeting.`,
+      fpclient: `As the client: you're a person getting help, not an interviewer. Most of your replies are STATEMENTS — answer, react, show you understood ("Oh, so the match is basically free money"), share a feeling or a detail, agree, or briefly push back. Ask a question in at most one of every three replies, and only when you genuinely don't understand or something matters to you. When Mason explains something clearly, show you got it in your own words and let him continue — don't ask him to explain it again. Follow the planner's lead. When Mason changes topics, engage fully with the new topic. Once he has acknowledged or addressed a worry, let it go — never bring the same worry up more than once more, and only if he ignored it completely. Share details when asked, in the way your knowledge level suggests (if he uses jargon you wouldn't know, ask what it means). Let your stress show in tone, not by derailing the meeting.`,
       sales: "As the buyer: answer discovery questions honestly; raise each objection once; if he handles it well, move on.",
       interview: "As the interviewer: ask one question at a time, follow up once when an answer is vague, then move to a new topic — don't repeat a question already answered.",
       networking: "As the professional: be friendly and real; answer his questions with specifics.",
@@ -442,7 +442,11 @@ Private notes: ${sc.hidden}
 Difficulty: ${difficulty} — ${DIFFICULTY_NOTE[difficulty]}
 ${roleRules}
 Rules: stay fully in character. This is spoken aloud, so sound like a real person on the other side of a desk — NOT like an AI assistant: 1-3 short sentences, contractions, plain everyday words, varied sentence length, one question at a time. Real people are a little messy: sometimes (not every line) start with "Um," "So," "Yeah," "Honestly," or "I mean," trail off, restart a thought ("We— well, mostly I"), give a short answer and stop, or answer only part of a question. Never use assistant-speak: no "Great question", "Absolutely", "I appreciate that", "That makes sense" (more than once), "I'd be happy to", "Certainly", or summarizing what Mason just said back to him. No lists, no markdown, no emojis, no stage directions. React to what Mason actually said (if he's vague, press; if he asks a good question, answer with real detail). Never coach him. Never repeat something you already said.
-Mason's words come from speech-to-text: if his last message looks cut off or garbled, naturally ask him to finish or repeat that part instead of guessing.
+Mason's words come from speech-to-text and may contain mistakes (e.g. "raw IRA" = Roth IRA, "for one K" = 401(k), "index fun" = index fund, missing words). Read through them: go with the most likely meaning given the conversation. Only ask him to repeat if you truly can't tell what he meant.
+${(() => {
+  const asked = thread.filter((t) => t.from !== "me").flatMap((t) => (t.text.match(/[^.!?]*\?/g) || []).map((q) => q.trim())).filter((q) => q.length > 8);
+  return asked.length ? `Questions you ALREADY asked (never ask these again, not even reworded — if Mason answered, accept it and move on): ${asked.slice(-8).map((q) => `"${q}"`).join("; ")}` : "";
+})()}
 Time: ${el.toFixed(1)} of about ${target} minutes used. ${clock}
 Transcript:
 ${thread.map((t) => `${t.from === "me" ? "Mason" : sc.counterpart.name}: ${t.text}`).join("\n")}
@@ -451,7 +455,31 @@ Return ONLY JSON: {"reply": "what you say next", "end": true/false}`,
     );
     const j = this.parseJSON(text, null);
     if (!j || typeof j.reply !== "string") throw new Error("Lost the conversation for a second — say that again?");
-    return { reply: j.reply.replace(/[*_#]/g, "").trim(), end: !!j.end };
+    let reply = j.reply.replace(/[*_#]/g, "").trim();
+    // Safety net: if the reply re-asks an earlier question (same idea, different words), rewrite it once.
+    const wordsOf = (s) => new Set(s.toLowerCase().replace(/[^a-z0-9 ]/g, " ").split(/\s+/).filter((w) => w.length > 3 && !/^(that|this|what|with|have|your|about|would|should|could|there|they|then|just|like|really|know|think)$/.test(w)));
+    const sim = (a, b) => {
+      const A = wordsOf(a);
+      const B = wordsOf(b);
+      if (!A.size || !B.size) return 0;
+      let n = 0;
+      for (const w of A) if (B.has(w)) n++;
+      return n / Math.min(A.size, B.size);
+    };
+    const prevQs = thread.filter((t) => t.from !== "me").flatMap((t) => t.text.match(/[^.!?]*\?/g) || []);
+    const newQs = reply.match(/[^.!?]*\?/g) || [];
+    const dup = newQs.find((q) => prevQs.some((p) => sim(q, p) >= 0.6));
+    if (dup && !j.end) {
+      try {
+        const again = await this.ask(
+          `You're ${sc.counterpart.name} in a spoken role-play. Your draft reply re-asked something you already asked earlier ("${dup.trim()}"). Rewrite your reply so it moves the conversation forward WITHOUT that question — react to what Mason just said, show you understood, or share something new. 1-2 short, natural sentences.\nMason just said: "${thread.filter((t) => t.from === "me").slice(-1)[0]?.text || ""}"\nYour draft: "${reply}"\nReturn ONLY JSON: {"reply": "..."}`,
+          { effort: "low", maxTokens: 400, timeout: 20000 }
+        );
+        const j2 = this.parseJSON(again, null);
+        if (j2?.reply) reply = j2.reply.replace(/[*_#]/g, "").trim();
+      } catch {}
+    }
+    return { reply, end: !!j.end };
   },
   async practiceAnalyze(sc, thread, metrics, mode) {
     const rubric = {

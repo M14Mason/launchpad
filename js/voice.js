@@ -457,6 +457,24 @@ const Voice = {
   },
 };
 
+// Speech-to-text often mangles finance words — fix the usual suspects before anyone reads them.
+function fixFinanceTerms(t) {
+  return String(t)
+    .replace(/\b(raw|rath|wrath|rot|ross|wroth|roth's)\s+(i\.?\s?r\.?\s?a\.?|ira|eras?|irish)\b/gi, "Roth IRA")
+    .replace(/\b(four|4)[\s-]*(oh|o|zero|0)?[\s-]*(one|1)[\s-]*\(?\s?(k|kay|okay)\b\)?/gi, "401(k)")
+    .replace(/\bfor one (k|kay)\b/gi, "401(k)")
+    .replace(/\b(four|4)[\s-]*(oh|o|zero|0)[\s-]*(three|3)[\s-]*\(?b\b\)?/gi, "403(b)")
+    .replace(/\bfive twenty[\s-]?nine\b/gi, "529")
+    .replace(/\bi\.?\s?r\.?\s?a\.?(?=\s|$|[,.?!])/gi, "IRA")
+    .replace(/\b(h\.? ?s\.? ?a\.?)(?=\s|$|[,.?!])/gi, "HSA")
+    .replace(/\b(e\.? ?t\.? ?f\.?)s?(?=\s|$|[,.?!])/gi, "ETF")
+    .replace(/\bs\s?(and|&|n)\s?p\s?(500|five hundred)\b/gi, "S&P 500")
+    .replace(/\bindex fun\b/gi, "index fund")
+    .replace(/\bemergency fun\b/gi, "emergency fund")
+    .replace(/\ba\.? ?p\.? ?r\.?(?=\s|$|[,.?!])/gi, "APR")
+    .replace(/\bcompound in\b/gi, "compounding");
+}
+
 // Find out early whether this browser has truly natural voices (used by Auto).
 if (Voice.supported) Voice.detectNatural().catch(() => {});
 

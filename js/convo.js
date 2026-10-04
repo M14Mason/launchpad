@@ -973,6 +973,7 @@ function listen() {
 
 async function onMyTurn(text, duration, audio = null) {
   if (P.thinking || P.phase !== "live") return;
+  text = fixFinanceTerms(text);
   P.listening = false;
   P.pending = "";
   P.thread.push({ from: "me", text, duration, audio });

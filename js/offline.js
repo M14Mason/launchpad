@@ -65,6 +65,20 @@ const OFFLINE = (() => {
       [/401|retire|employer|match/i, "My hospital has a 401(k) with a match, but I never signed up."],
     ],
     fillers: ["Okay. So where do I even start?", "That makes sense. What would you do first if you were me?", "Hmm. Is that realistic for me?", "I see. What's the catch?"],
+    // When you explain or advise, a real client mostly shows they understood — by topic, in their own words.
+    understood: [
+      [/emergency|rainy day|cushion|cash (cushion|reserve)/i, ["Okay, so build up the emergency savings first. That actually makes me feel better.", "Right — so if something breaks, I'm not putting it on a card. Got it.", "Three to six months… yeah, I'm not close, but I get why it matters."]],
+      [/match|401|retire/i, ["Oh, so the match is basically free money I'm leaving on the table. That's annoying, honestly.", "Okay, so I bump my contribution up at least to the match. I can do that.", "Huh. I didn't realize I was missing out on that."]],
+      [/debt|card|loan|interest|avalanche|snowball|pay (it |that )?off/i, ["So the card with the highest rate goes first. That makes sense — it's costing me the most.", "Okay, so I keep paying the minimums on everything and throw the extra at one card.", "Yeah, that interest is killing me. I'm on board."]],
+      [/budget|spend|cut|track/i, ["Yeah… I know I spend too much eating out. I can cut that back.", "Okay, tracking it for a month. I can try that.", "That's fair. I don't really know where it all goes."]],
+      [/roth|ira|tax/i, ["Okay, so I pay the tax now and it's tax-free later. That's actually pretty cool.", "Got it — tax-free when I retire. I like the sound of that."]],
+      [/invest|stock|index|diversif|market|fund/i, ["So instead of picking stocks, I just own a little of everything. That sounds less scary.", "Okay. Long-term, and I don't panic when it drops. I'll try.", "That makes sense — I don't need to time it."]],
+      [/goal|house|condo|down payment|college|travel|save for/i, ["Okay, so if I put a set amount aside every month, it's actually doable. That's encouraging.", "So it's more about time than a huge amount right now. Got it."]],
+      [/insur|will|beneficiar|guardian/i, ["Yeah, I've been putting that off. I'll look into it.", "That's a good point — I hadn't thought about what happens if something happens to me."]],
+      [/plan|step|first|priorit|next/i, ["Okay, so there's an order to this. That helps — it felt like everything at once before.", "That's a lot clearer. I can actually see the steps now."]],
+    ],
+    understoodGeneric: ["Okay, that makes sense.", "Got it. That's clearer than I expected.", "Huh, okay. I didn't think of it that way.", "Yeah, I can do that.", "Alright, that's fair.", "Okay. I feel a little better about this, honestly."],
+    unsure: ["Hmm, I've honestly never thought about that.", "I'm not sure, to be honest. I'd have to look.", "No idea, honestly — that's kind of why I'm here.", "I don't know off the top of my head."],
   };
   const BUYER = {
     objections: ["Honestly, it sounds expensive. What does it cost?", "We already use something for this. Why switch?", "I'm not sure we need it right now.", "How do I know it actually works?", "I'd have to run this by my partner first."],
@@ -120,46 +134,82 @@ const OFFLINE = (() => {
     }
     if (kind === "fpclient") {
       const c = o.client || {};
-      const asked = /\?|what|how|tell me|do you/i.test(last);
-      // A beginner asks what jargon means (once per term).
-      const jargon = (last.match(/\b(roth|ira|401\(?k\)?|index fund|etf|asset allocation|diversif\w*|compound(ing)?|expense ratio|liquidity|apr)\b/i) || [])[0];
-      sc.asked ||= [];
-      // (Not when you asked about their own accounts — clients know what they have, even if not the jargon.)
-      if (jargon && (c.know || 2) <= 2 && !sc.asked.includes(jargon.toLowerCase()) && !(sc.clientFacts || []).some(([re], i) => re.test(last) && !sc.revealed.includes(i))) {
-        sc.asked.push(jargon.toLowerCase());
-        return { reply: `Sorry — what's ${/^[aeiou]/i.test(jargon) ? "an" : "a"} ${jargon}? I've heard of it but I don't really get it.`, end: false };
-      }
       const FACTS = sc.clientFacts || CLIENT.facts;
-      // A client-book client answers every topic you asked about in this message (from their file).
-      if (sc.clientFacts) {
-        // Small talk and process talk get a natural reply, not a data dump.
-        if (/\b(nice to meet|how are you|thanks for (coming|meeting)|how (I|this) work|the process|today we|agenda)\b/i.test(last) && !/\?.*\b(rent|debt|sav|income|pay|401|goal|risk)/i.test(last))
-          return { reply: pick(sc.smallTalk || ["Nice to meet you too. That sounds good — where do you want to start?", "Okay, that makes sense. I'm ready when you are."]), end: false };
-        const hits = FACTS.map((f, i) => [f, i]).filter(([[re], i]) => re.test(last) && !sc.revealed.includes(i)).slice(0, sc.style === "brief" ? 1 : 3);
-        hits.forEach(([, i]) => sc.revealed.push(i));
-        // Personality shapes how they talk.
-        const flavor = () => {
-          const r = Math.random();
-          if (sc.style === "chatty" && r < 0.45) return " " + pick(["Sorry, I'm rambling — my sister says I always do this.", "Anyway, that's a long story.", "Oh, and the dog just knocked over a lamp at home, so that's my day."]);
-          if (sc.style === "skeptical" && r < 0.35) return " " + pick(["But how do I know this will actually work for me?", "No offense, but the last guy just wanted to sell me something.", "What's in it for you, exactly?"]);
-          if ((sc.style === "anxious" || (c.worry || 3) >= 4) && r < 0.35) return " " + pick(["Sorry — this stuff stresses me out.", "Is that bad? It feels bad.", "I lie awake thinking about this sometimes."]);
-          if (sc.style === "detailed" && r < 0.3) return " " + pick(["Can you show me the math on that later?", "I have a spreadsheet for this, actually."]);
-          if (sc.style === "upbeat" && r < 0.3) return " " + pick(["I'm honestly excited to get this figured out!", "This is already helping."]);
-          return "";
-        };
-        // Surprise goal: volunteered on their own partway through — you have to catch it.
-        const surprise = mine.length >= 3 && sc.surprise?.length && Math.random() < 0.45 ? " " + sc.surprise.shift() : "";
-        if (hits.length) return { reply: hits.map(([f]) => f[1]).join(" ") + surprise + flavor(), end: false };
-        if (surprise) return { reply: surprise.trim(), end: false };
-        if (sc.style === "guarded" && /\b(how much|what('s| is) your|income|balance)\b/i.test(last) && Math.random() < 0.5) return { reply: pick(["I'd rather not get into exact numbers yet.", "Why do you need to know that?"]), end: false };
+      sc.said ||= [];
+      sc.asked ||= [];
+      const fresh = (arr) => arr.filter((x) => !sc.said.includes(x));
+      const say = (x) => (sc.said.push(x), { reply: x, end: false });
+      const pickFresh = (arr) => pick(fresh(arr).length ? fresh(arr) : arr);
+      const pickNew = (arr) => (fresh(arr).length ? ((x) => (sc.said.push(x), x))(pick(fresh(arr))) : "");
+      const t = last.trim();
+      // Is Mason asking something, or explaining/advising? Clients only share facts when asked.
+      const asked =
+        /\?/.test(t) ||
+        /^(what|how|when|where|why|who|tell me|do you|did you|does|can you|could you|are you|is there|have you|would you|any)\b/i.test(t) ||
+        /\b(tell me|walk me through|i'?d (love|like) to (hear|know|understand)|let'?s talk about|can you share|curious (about|how|what)|any idea|fill me in)\b/i.test(t);
+      // Small talk gets small talk back.
+      if (/\b(nice to meet|good to (see|meet)|how are you|how have you been|how'?s (it going|everything|your (day|week|weekend|family))|thanks for (coming|meeting|making)|welcome|how (I|this) work|the process|today we|agenda)\b/i.test(t) && !/\b(rent|debt|sav|income|pay|401|goal|risk|spend|budget)\b/i.test(t))
+        return say(pickFresh(sc.smallTalk || ["Nice to meet you too. Where do you want to start?", "Good, thanks. I'm ready when you are."]));
+      // "What brings you in?" — they tell you what's worrying them.
+      if (/\b(what brings you|why (are you|did you come)|what made you|how can i help|what('s| is) on your mind|what('s| is) going on|what can i do for you|where do you want to start)\b/i.test(t) && sc.whyHere && !sc.said.includes(sc.whyHere)) return say(sc.whyHere);
+      // A beginner asks what jargon means — once per term, and not when you just explained it.
+      const jargon = (t.match(/\b(roth|ira|401\(?k\)?|index fund|etf|asset allocation|diversif\w*|compound(ing)?|expense ratio|liquidity|apr)\b/i) || [])[0];
+      const explained = /\b(means|meaning|basically|in other words|it'?s like|which is|that'?s when|think of it)\b/i.test(t);
+      // Checking in ("does that make sense?") gets a real answer, not a random fact.
+      if (/\b(make sense|makes sense|sound good|sounds good|does that work|you with me|following me|any questions|clear so far|okay with you|how does that sound)\b/i.test(t) && /\?/.test(t)) {
+        sc.qTurns = (sc.qTurns || 0) + 1;
+        if (sc.qTurns % 3 === 0 && fresh(CLIENT.fillers).length) return say(pick(fresh(CLIENT.fillers)));
+        return say(pickFresh(["Yeah, that makes sense.", "Yep, I'm following.", "I think so, yeah. It's a lot, but it makes sense.", "Sounds good to me.", "Yeah — honestly, clearer than I expected."]));
       }
-      const hit = FACTS.find(([re], i) => re.test(last) && !sc.revealed.includes(i));
-      if (hit) sc.revealed.push(FACTS.indexOf(hit));
-      const vague = !sc.clientFacts && (c.numbers || 2) <= 2 ? pick(["Honestly I'm not sure exactly, but ", "I think it's something like — ", "Don't quote me, but "]) : "";
-      const worried = (c.worry || 3) >= 4 && Math.random() < 0.35 ? " Sorry, this stuff just stresses me out." : "";
-      if (hit) return { reply: vague + (vague && !/^I\b/.test(hit[1]) ? hit[1].charAt(0).toLowerCase() + hit[1].slice(1) : hit[1]) + worried, end: false };
-      if (mine.length >= 9) return { reply: `${sc.revealed.length >= 4 ? "This actually helps a lot. I feel like I have a plan." : "Okay... I think I need to think about it more."} Thanks for your time.`, end: true };
-      return { reply: hit ? hit[1] : asked ? pick(["I'm not totally sure. What do you mean exactly?", "Good question. Honestly, I've never thought about that."]) : pick(CLIENT.fillers), end: false };
+      const knowsIt = jargon && (sc.knows || []).some((k) => jargon.toLowerCase().includes(k));
+      if (jargon && !knowsIt && !explained && (c.know || 2) <= 2 && !sc.asked.includes(jargon.toLowerCase()) && !FACTS.some(([re], k) => asked && re.test(t) && !sc.revealed.includes(k))) {
+        sc.asked.push(jargon.toLowerCase());
+        return say(`Sorry — what's ${/^[aeiou]/i.test(jargon) ? "an" : "a"} ${jargon}? I've heard of it but I don't really get it.`);
+      }
+      // Personality shapes how they talk.
+      const flavor = () => {
+        const r = Math.random();
+        let x = "";
+        if (sc.style === "chatty" && r < 0.3) x = pickNew(["Sorry, I'm rambling — my sister says I always do this.", "Anyway, that's a long story.", "Oh, and the dog knocked over a lamp this morning, so that's my day."]);
+        else if (sc.style === "skeptical" && r < 0.25) x = pickNew(["No offense, but the last guy just wanted to sell me something.", "I'll believe it when I see it."]);
+        else if ((sc.style === "anxious" || (c.worry || 3) >= 4) && r < 0.3) x = pickNew(["Sorry — this stuff stresses me out.", "Is that bad? It feels bad.", "I lie awake thinking about this sometimes."]);
+        else if (sc.style === "detailed" && r < 0.25) x = pickNew(["I have a spreadsheet for this, actually.", "I can send you the exact numbers later."]);
+        else if (sc.style === "upbeat" && r < 0.25) x = pickNew(["This is already helping.", "Okay, I'm feeling better already."]);
+        return x ? " " + x : "";
+      };
+      const surprise = () => (mine.length >= 3 && sc.surprise?.length && Math.random() < 0.35 ? sc.surprise.shift() : "");
+      if (asked) {
+        // Answer what you asked about — at most two facts, and one goal at a time (like a real person).
+        let hits = FACTS.map((f, k) => [f, k]).filter(([[re], k]) => re.test(t) && !sc.revealed.includes(k));
+        const goalId = (f) => (f[2] || "").replace(/^(goal|when)-/, "");
+        const firstGoal = hits.find(([f]) => /^(goal|when)-/.test(f[2] || ""));
+        hits = hits.filter(([f]) => !/^(goal|when)-/.test(f[2] || "") || (firstGoal && goalId(f) === goalId(firstGoal[0])));
+        hits = hits.slice(0, sc.style === "brief" ? 1 : 2);
+        if (hits.length) {
+          hits.forEach(([, k]) => sc.revealed.push(k));
+          const vague = !sc.clientFacts && (c.numbers || 2) <= 2 ? pick(["Honestly I'm not sure exactly, but ", "I think it's something like ", "Don't quote me, but "]) : "";
+          const body = hits.map(([f]) => f[1]).join(" ");
+          return say(vague + (vague && !/^I\b/.test(body) ? body.charAt(0).toLowerCase() + body.slice(1) : body) + flavor());
+        }
+        // Asked again about something they already told you: they repeat it, they don't forget.
+        const told = FACTS.find(([re], k) => re.test(t) && sc.revealed.includes(k));
+        if (told) return say(`Like I said — ${told[1].charAt(0).toLowerCase() + told[1].slice(1)}`);
+        if (sc.style === "guarded" && /\b(how much|what('s| is) your|income|balance)\b/i.test(t) && Math.random() < 0.5) return say(pickFresh(["I'd rather not get into exact numbers yet.", "Why do you need to know that?"]));
+        const sp = surprise();
+        if (sp) return say(sp);
+        return say(pickFresh(CLIENT.unsure));
+      }
+      if (mine.length >= 9 && !sc.clientFacts) return { reply: `${sc.revealed.length >= 4 ? "This actually helps a lot. I feel like I have a plan." : "Okay... I think I need to think about it more."} Thanks for your time.`, end: true };
+      // Mason is explaining or advising: show you understood — mostly statements, a question at most every third time.
+      const sp = surprise();
+      if (sp) return say(sp);
+      const topic = CLIENT.understood.find(([re]) => re.test(t));
+      const lines = fresh(topic ? topic[1] : []);
+      if (lines.length) return say(pick(lines) + flavor());
+      sc.qTurns = (sc.qTurns || 0) + 1;
+      const qs = fresh(CLIENT.fillers);
+      if (sc.qTurns % 3 === 0 && qs.length) return say(pick(qs));
+      return say(pickFresh(CLIENT.understoodGeneric));
     }
     if (kind === "sales") {
       const asked = /\?/.test(last) || /\b(what|how|why|tell me|do you|are you)\b/i.test(last);
