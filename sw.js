@@ -1,5 +1,5 @@
 // Network-first service worker: always tries for the latest version, falls back to the cached copy offline.
-const CACHE = "launchpad-v19";
+const CACHE = "launchpad-v20";
 
 self.addEventListener("install", () => self.skipWaiting());
 self.addEventListener("activate", (e) => e.waitUntil(self.clients.claim()));

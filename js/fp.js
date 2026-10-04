@@ -587,6 +587,58 @@ const FP = (() => {
     else if (days > 3) (s--, notes.push(`✗ Took ${days} days to reply`));
     return { score: s, delta: Math.max(-4, Math.min(4, s - 1)), notes };
   }
+  // "See you Thursday", "tomorrow at 2", "next week", "the 15th", "Oct 20" → a calendar day (or null).
+  const MEETY = /\b(meet|meeting|call|see you|talk|chat|come in|sit down|review|schedule|book|catch up|go over|stop by|zoom)\b/i;
+  function parseWhen(b, text) {
+    const t = text.toLowerCase();
+    if (!MEETY.test(t)) return null;
+    const today = dateFor(b, b.day);
+    const wdNames = ["sunday", "monday", "tuesday", "wednesday", "thursday", "friday", "saturday"];
+    if (/\b(today|this (afternoon|morning|evening))\b/.test(t)) return b.day;
+    if (/\btomorrow\b/.test(t)) return b.day + 1;
+    const inN = t.match(/\bin (\d+|a|one|two|three) (day|week)s?\b/);
+    if (inN) {
+      const n = { a: 1, one: 1, two: 2, three: 3 }[inN[1]] ?? +inN[1];
+      return b.day + n * (inN[2] === "week" ? 7 : 1);
+    }
+    const wd = t.match(/\b(next )?(sun|mon|tues?|wed(nes)?|thu(rs?)?|fri|sat(ur)?)(day)?\b/);
+    if (wd) {
+      const idx = wdNames.findIndex((w) => w.startsWith(wd[2].slice(0, 3)));
+      let diff = (idx - today.getDay() + 7) % 7 || 7;
+      if (wd[1] && diff < 7 && /next (sun|mon|tue|wed|thu|fri|sat)/.test(t) && diff <= 2) diff += 7;
+      return b.day + diff;
+    }
+    if (/\bnext week\b/.test(t)) return b.day + ((8 - today.getDay()) % 7 || 7);
+    const months = ["jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec"];
+    const md = t.match(/\b(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\.? (\d{1,2})(st|nd|rd|th)?\b/);
+    const dom = md ? +md[2] : +(t.match(/\bthe (\d{1,2})(st|nd|rd|th)\b/)?.[1] || 0);
+    if (dom >= 1 && dom <= 31) {
+      for (let d = b.day + 1; d < b.day + 70; d++) {
+        const dt = dateFor(b, d);
+        if (dt.getDate() === dom && (!md || dt.getMonth() === months.indexOf(md[1]))) return d;
+      }
+    }
+    return null;
+  }
+  // Book (or move) the client's meeting to the day you named — or the closest day that works for both of you.
+  function bookFromEmail(b, clientId, want) {
+    let out = null;
+    Clients.update(clientId, (c) => {
+      if (c.stage === "lost") return;
+      const type = c.next && !c.next.missed ? c.next.type : Clients.meetingType(c);
+      const free = (d) => canMeet(b, c, d) && roomOn(b, d, c.id) >= loadOf(type);
+      let day = want;
+      let why = "";
+      if (!free(want)) {
+        why = !isWeekday(b, want) ? "weekend" : !canMeet(b, c, want) ? "client" : "full";
+        day = freeDay(b, want, type, c);
+      }
+      c.next = { type, day, annual: c.next?.annual };
+      out = { type, day, want, why, first: c.first, last: c.last };
+    });
+    if (out) push(b, { app: "messages", from: TEAM.assistant, clientId, body: `📅 Booked ${out.first}'s ${Clients.MEETING_NAME[out.type].toLowerCase()} for ${fmtDate(b, out.day, { weekday: "long", month: "short", day: "numeric" })}${out.why ? ` (${fmtDate(b, out.want, { weekday: "long" })} didn't work — ${out.why === "client" ? "they're not free that day" : out.why === "weekend" ? "the office is closed" : "your calendar was full"})` : ""}.`, kind: "reminder", read: true });
+    return out;
+  }
   function reply(msgId, text) {
     const s = state();
     const b = s.books[s.mode];
@@ -615,12 +667,19 @@ const FP = (() => {
         c.relHistory.push({ month: c.month, delta: res.delta, reason: `Replied to “${m.subject || "email"}”` });
       });
     if (b.mode === "career") b.xp = (b.xp || 0) + Math.max(0, res.score) * 2;
+    // Named a day? Put it on the calendar.
+    const want = m.clientId ? parseWhen(b, text) : null;
+    const booked = want != null ? bookFromEmail(b, m.clientId, want) : null;
+    // Wrapping up ("see you then", "talk soon") or a long thread → the client closes it out.
+    const mine = m.thread.filter((x) => x.who === "me").length;
+    const closing = !!booked || mine >= 3 || (/\b(see you|talk (to you )?soon|talk then|have a (good|great|nice)|take care|bye|cheers|thanks again|anytime|you're welcome|no problem)\b/i.test(text) && !/\?\s*$/.test(text.trim()));
     save(s);
-    if (m.clientId) clientResponds(b.mode, m.id, res);
-    return res;
+    if (m.clientId) clientResponds(b.mode, m.id, res, { booked, closing });
+    else if (booked) FPDock.render();
+    return { ...res, booked };
   }
   // The client writes back — in character (Claude), or with a built-in reply that reacts to how good your answer was.
-  async function clientResponds(mode, msgId, res) {
+  async function clientResponds(mode, msgId, res, ctx = {}) {
     const s0 = state();
     const m0 = s0.books[mode].inbox.find((x) => x.id === msgId);
     const c = Clients.find(m0?.clientId);
@@ -635,17 +694,23 @@ const FP = (() => {
 ${Clients.notesFor(c)}
 The email thread so far:
 ${thread}
-Write ${c.first}'s next reply email: 1-4 short sentences, natural and specific to what Mason said. If his answer helped, say so; if it dodged your question, was vague, or promised returns, push back or ask again. If he suggested a call or meeting, respond to that. Sometimes ask one natural follow-up question. No sign-off, no subject line.
+${ctx.booked ? `CALENDAR: the meeting is now booked for ${fmtDate(s0.books[mode], ctx.booked.day, { weekday: "long", month: "long", day: "numeric" })}.${ctx.booked.why === "client" ? ` You can't do ${fmtDate(s0.books[mode], ctx.booked.want, { weekday: "long" })} (you have a conflict), so you suggest that day instead.` : ctx.booked.why ? ` Mason's office moved it to that day.` : ""} Confirm the day in a short, friendly way and END the conversation — no new questions.` : ctx.closing ? "Mason is wrapping up the conversation. Reply with ONE short, friendly closing line (like a real person ending an email chain). No new questions." : ""}
+Write ${c.first}'s next reply email: 1-3 short sentences, natural and specific to what Mason said, like a real person (not an assistant). If his answer helped, say so; if it dodged your question, was vague, or promised returns, push back. Only ask a follow-up question if something important is genuinely still unanswered — most real email chains end after one or two replies. No sign-off, no subject line.
 Return ONLY JSON: {"reply": "...", "asksQuestion": true/false}`,
           { effort: "low", maxTokens: 700, timeout: 30000 }
         );
         const j = AI.parseJSON(out, null);
         if (j?.reply) {
           text = j.reply.trim();
-          asks = !!j.asksQuestion;
+          asks = !!j.asksQuestion && !ctx.closing;
         }
       } catch {}
     }
+    if (!text && ctx.booked) {
+      const b0 = s0.books[mode];
+      const dd = fmtDate(b0, ctx.booked.day, { weekday: "long" });
+      text = ctx.booked.why === "client" ? `Ah, ${fmtDate(b0, ctx.booked.want, { weekday: "long" })} doesn't work for me — could we do ${dd} instead? I'll put that down.` : `${dd} works. See you then!`;
+    } else if (!text && ctx.closing) text = ["Sounds good — thanks again, Mason!", "Thanks, talk soon.", "Perfect, thank you!", "Appreciate it. Have a good one!"][Math.floor(Math.random() * 4)];
     if (!text) {
       const good = res.score >= 3;
       const ok = res.score >= 1;
@@ -655,7 +720,7 @@ Return ONLY JSON: {"reply": "...", "asksQuestion": true/false}`,
         : ok
           ? pickOne(["Okay… I think I get it. So what should I actually do this week?", "Thanks. Can you explain that a little more simply?", "Got it. Is there anything I should change right now?"])
           : pickOne(["Hmm, that doesn't really answer my question.", "I'm still pretty worried. Can we talk on the phone?", "I was hoping for a clearer answer, honestly."]);
-      asks = /\?$/.test(text);
+      asks = /\?$/.test(text) && !ctx.closing;
     }
     const s = state();
     const b = s.books[mode];
@@ -666,8 +731,13 @@ Return ONLY JSON: {"reply": "...", "asksQuestion": true/false}`,
     m.read = false;
     m.needsReply = asks;
     if (asks) m.replied = false;
+    else m.closed = true;
     save(s);
     FPDock.render();
+    if (ctx.booked && /^#(fp|client)/.test(location.hash)) {
+      route.keepScroll = true;
+      route();
+    }
   }
 
   function qGoals(b, clients = clientsIn(b.mode)) {
@@ -681,7 +751,7 @@ Return ONLY JSON: {"reply": "...", "asksQuestion": true/false}`,
       { label: "Average relationship 60+", done: avg >= 60, pct: Math.min(100, (avg / 60) * 100) },
     ];
   }
-  return { HIRES, hire, capOf, qGoals, ROLES, TEAM, state, save, book, setBook, bookOf, dateFor, fmtDate, clientsIn, tick, push, acceptLead, afterMeeting, reply, scoreReply, HEADLINES, newsFor, headlinesFor, LOAD, CAP, loadOf, hashS, bookedLoad, roomOn, canMeet, freeDay, schedule, reschedule, offDay, WEEKDAY, isWeekday, meetingsToday };
+  return { HIRES, hire, capOf, qGoals, ROLES, TEAM, state, save, book, setBook, bookOf, dateFor, fmtDate, clientsIn, tick, push, acceptLead, afterMeeting, reply, parseWhen, scoreReply, HEADLINES, newsFor, headlinesFor, LOAD, CAP, loadOf, hashS, bookedLoad, roomOn, canMeet, freeDay, schedule, reschedule, offDay, WEEKDAY, isWeekday, meetingsToday };
 })();
 
 // =============== screens ===============
