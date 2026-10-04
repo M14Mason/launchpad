@@ -89,7 +89,7 @@ const Clients = (() => {
   ];
   // Specific life goals. `say` is how the client describes it; {amt} and {yrs} are filled in.
   const GOAL_POOL = [
-    { id: "house", name: "Down payment on a first home", t: [40000, 120000], y: [2, 7], when: (c) => !c.owns, say: "We really want to buy our first place — I think we'd need about {amt} for the down payment, hopefully in {yrs} years." },
+    { id: "house", name: "Down payment on a first home", t: [40000, 120000], y: [2, 7], when: (c) => !c.owns && c.age < 52, say: "We really want to buy our first place — I think we'd need about {amt} for the down payment, hopefully in {yrs} years." },
     { id: "wedding", name: "Pay for their wedding", t: [20000, 45000], y: [1, 3], when: (c) => !c.married && c.age < 42, say: "We're getting engaged soon, I think — the wedding will probably be around {amt}, in about {yrs} years." },
     { id: "kidwedding", name: "Help pay for a child's wedding", t: [15000, 40000], y: [1, 4], when: (c) => c.kids > 0 && c.age > 48, say: "Our oldest is getting married — we promised to chip in about {amt}, probably in {yrs} years." },
     { id: "sabbatical", name: "A year-long sabbatical to travel", t: [30000, 65000], y: [3, 6], when: (c) => c.age < 50, say: "I've always wanted to take a full year off to travel — maybe {amt} — in {yrs} years or so." },
@@ -181,7 +181,7 @@ const Clients = (() => {
     const dream = pickR(r, RETIRE_DREAMS);
     const early = /early/.test(dream.name) && income > 85000;
     const retireAt = Math.max(age + 3, early ? between(r, 52, 57) : between(r, 60, 68));
-    goals.push({ id: "retire", name: dream.name.replace("{age}", retireAt), target: Math.round(((income * (early ? 0.55 : 0.4) + dream.extra) * (age < 62 ? 25 : 22)) / 10000) * 10000, years: Math.max(1, retireAt - age), priority: age > 55 ? 1 : 2, say: `${dream.say} I'm hoping to retire at ${retireAt}, so about {yrs} years. Someone told me I'd need around {amt}.` });
+    goals.push({ id: "retire", name: dream.name.replace("{age}", retireAt), target: Math.round(((income * (early ? 0.55 : 0.4) + dream.extra) * (age < 62 ? 25 : 22)) / 10000) * 10000, years: Math.max(1, retireAt - age), priority: age > 55 ? 1 : 2, say: `${dream.say} I'm hoping to retire at {at}, so about {yrs} years. Someone told me I'd need around {amt}.` });
     kids.filter((k) => k.age < 17).slice(0, 2).forEach((k) => goals.push({ id: "college-" + k.name.toLowerCase(), name: `${k.name}'s college fund`, target: between(r, 60000, 140000, 10000), years: Math.max(1, 18 - k.age), priority: 3 }));
     const ctx = { owns, age, income, married, kids: nKids };
     const pool = GOAL_POOL.filter((g) => g.when(ctx)).sort(() => r() - 0.5);
@@ -325,8 +325,28 @@ const Clients = (() => {
       c.partnerView = pickR(r, ["wants to spend more on travel now", "wants to pay off debt before anything else", "is much more nervous about investing", "wants to retire earlier", "thinks the kids' college should come first", "wants a bigger house"]);
     }
     makeFeasible(c);
+    c.intakeGoals = c.truth.goals.filter((g) => !g.hidden).map((g) => g.name);
+    c.v = 3;
     return c;
   }
+  // Single clients talk about themselves, not "we".
+  const solo = (c, s) =>
+    c.married || c.partner
+      ? s
+      : String(s)
+          .replace(/\bWe're\b/g, "I'm")
+          .replace(/\bwe're\b/g, "I'm")
+          .replace(/\bWe've\b/g, "I've")
+          .replace(/\bwe've\b/g, "I've")
+          .replace(/\bWe'd\b/g, "I'd")
+          .replace(/\bwe'd\b/g, "I'd")
+          .replace(/\bWe\b/g, "I")
+          .replace(/\bwe\b/g, "I")
+          .replace(/\bOur\b/g, "My")
+          .replace(/\bour\b/g, "my")
+          .replace(/\bus\b/g, "me");
+  // A goal in the client's own words, with today's numbers.
+  const goalSay = (c, g, amt) => solo(c, (g.say || "").replace("{amt}", amt).replace("{yrs}", g.years).replace("{at}", c.age + g.years));
 
   // Keep every client's situation workable: a real (small) monthly surplus, a retirement goal that
   // 401(k)/IRA saving can reach, and other goals a sensible plan can fund with tradeoffs.
@@ -424,12 +444,23 @@ const Clients = (() => {
     const list = all();
     let dirty = false;
     for (const c of list) {
-      if ((c.v || 0) >= 2) continue;
+      if ((c.v || 0) >= 3) continue;
+      if ((c.v || 0) >= 2) {
+        const ret = c.truth.goals.find((g) => g.id === "retire");
+        if (ret?.say) ret.say = ret.say.replace(/retire at \d{2}/, "retire at {at}");
+        if (ret) c.intakeGoals = (c.intakeGoals || []).map((n) => (/^retire/i.test(n) ? ret.name : n));
+        c.v = 3;
+        dirty = true;
+        continue;
+      }
       c.docs = docsOf(c);
       receiveDocs(c, c.docs.filter((d) => d.status === "received").map((d) => d.name), "backfill");
       makeFeasible(c, { sync: true });
       prune(c);
-      c.v = 2;
+      const ret = c.truth.goals.find((g) => g.id === "retire");
+      if (ret?.say) ret.say = ret.say.replace(/retire at \d{2}/, "retire at {at}");
+      if (ret) c.intakeGoals = (c.intakeGoals || []).map((n) => (/^retire/i.test(n) ? ret.name : n));
+      c.v = 3;
       dirty = true;
     }
     if (dirty) saveAll(list);
@@ -461,8 +492,8 @@ const Clients = (() => {
         { key: "min-" + d.id, label: `${d.name} minimum payment`, sec: "Debts", ask: /minimum|monthly payments?|\bpayments?\b/i, num: d.min, say: (v) => `The minimum on the ${d.name.toLowerCase()} is ${v(d.min)} a month.` },
       ]),
       ...t.goals.flatMap((g) => [
-        { key: "goal-" + g.id, label: `Goal: ${g.name} (amount)`, sec: "Goals", hidden: g.hidden, ask: /\b(goals?|future|dreams?|plans?|saving for|want to|hoping|house|college|retire|retirement|trip|travel|business|car|anything else)\b/i, num: g.target, say: (v) => (g.say ? g.say.replace("{amt}", v(g.target)).replace("{yrs}", g.years) : `I want ${g.name.toLowerCase()} — maybe ${v(g.target)} — in about ${g.years} years.`) },
-        { key: "when-" + g.id, label: `Goal: ${g.name} (years away)`, sec: "Goals", hidden: g.hidden, ask: /\b(when|how (long|soon)|timeline|by when|years?)\b/i, num: g.years, years: true, say: () => `For ${g.id === "retire" ? "retirement" : g.name.toLowerCase().replace(/^a /, "the ")}, ideally within ${g.years} years.` },
+        { key: "goal-" + g.id, label: `Goal: ${g.name} (amount)`, sec: "Goals", hidden: g.hidden, ask: /\b(goals?|future|dreams?|plans?|saving for|want to|hoping|house|college|retire|retirement|trip|travel|business|car|anything else)\b/i, num: g.target, say: (v) => (g.say ? goalSay(c, g, v(g.target)) : `I want ${g.name.toLowerCase()} — maybe ${v(g.target)} — in about ${g.years} years.`) },
+        { key: "when-" + g.id, label: `Goal: ${g.name} (years away)`, sec: "Goals", hidden: g.hidden, ask: /\b(when|how (long|soon)|timeline|by when|how many years|what age|by what age|what year)\b/i, num: g.years, years: true, say: () => `For ${g.id === "retire" ? "retirement" : g.name.toLowerCase().replace(/^a /, "the ")}, ideally within ${g.years} years.` },
       ]),
     ];
     return F;
@@ -705,7 +736,7 @@ const Clients = (() => {
     makeFeasible(c, { forget: true, cashOnly: !ev.gsay, only: ev.gsay ? ev.goal : null });
     if (ev.goal && ev.gsay) {
       const g = t.goals.find((x) => x.id === ev.goal);
-      if (g) ev.say = `I've been thinking about something new — ${ev.gsay.replace("{amt}", "$" + g.target.toLocaleString()).replace("{yrs}", g.years).replace(/^./, (x) => x.toLowerCase())}`;
+      if (g) ev.say = solo(c, `I've been thinking about something new — ${ev.gsay.replace("{amt}", "$" + g.target.toLocaleString()).replace("{yrs}", g.years).replace(/^./, (x) => x.toLowerCase())}`);
       delete ev.gsay;
       ev.goal = g?.name || ev.goal;
     }
@@ -876,7 +907,7 @@ const Clients = (() => {
 PERSONALITY: ${STYLES[c.style] || "Friendly."} Stay consistent with it.
 ${c.couple ? `COUPLES MEETING: your ${c.married ? "spouse" : "partner"} ${c.partner} is also here. You play BOTH people. ${c.partner}'s personality: ${STYLES[c.partnerStyle] || "friendly"}; ${c.partner} ${c.partnerView}, which ${c.first} doesn't fully agree with. Start each person's line with their name in brackets, like [${c.first}] ... [${c.partner}] ... Let ${c.partner} speak in most turns; sometimes they disagree and Mason has to balance both.` : ""}
 Money: ${t.owns ? "mortgage" : t.withFamily ? "you live with family and pay" : "rent"} ${usd(t.housing)}/mo; other spending ${usd(t.living)}/mo; cash savings ${usd(t.cash)}; ${t.k401 || t.contrib ? `401(k) ${usd(t.k401)}, contributing ${t.contrib}%${t.match ? `, employer matches up to ${t.match}%` : ", no employer match"}` : "no workplace retirement plan"}; ${t.roth ? "Roth IRA " + usd(t.roth) : "no Roth IRA"}; debts: ${t.debts.map((d) => `${d.name} ${usd(d.balance)} at ${d.apr}% (min ${usd(d.min)}/mo)`).join("; ") || "none"}. Life insurance: ${t.insurance == null ? "only through work" : t.insurance ? "yes" : "none"}.
-Goals you told them about on the intake form: ${t.goals.filter((g) => !g.hidden).map((g) => `${g.name} — about ${usd(g.target)} in ${g.years} years${g.say ? ` (in your words: "${g.say.replace("{amt}", usd(g.target)).replace("{yrs}", g.years)}")` : ""}`).join("; ")}.
+Goals you told them about on the intake form: ${t.goals.filter((g) => !g.hidden).map((g) => `${g.name} — about ${usd(g.target)} in ${g.years} years${g.say ? ` (in your words: "${goalSay(c, g, usd(g.target))}")` : ""}`).join("; ")}.
 ${surprise.length ? `SURPRISE GOAL(S) you didn't put on the form: ${surprise.map((g) => `${g.name} — about ${usd(g.target)} in ${g.years} years`).join("; ")}. Partway through the conversation (not in your first two replies), bring it up casually on your own, like "Oh — before I forget…". Only mention it once.` : ""}
 Worries right now: ${worriesNow(c).join("; ")}. Risk attitude (say it like this when asked): "${RISK_SAY[t.risk - 1]}"
 Knowledge level ${t.levels[0]}/5 (1 = asks what basic terms mean). Knows numbers ${t.levels[1]}/5 (low = give rounded guesses like "${v(t.housing)}"). Worry ${t.levels[2]}/5.
@@ -924,7 +955,7 @@ ${type === "email" ? "You're emailing your planner between meetings. Only mentio
     const openingFull = [opening, moodSay, guest ? `I brought my ${guest.rel}, ${guest.name} — I hope that's okay.` : ""].filter(Boolean).join(" ");
     // Built-in partner: answers by topic, plus a surprise goal it volunteers partway through.
     const v = voiceNum(c);
-    const surprise = c.truth.goals.filter((g) => g.hidden && !c.collected["goal-" + g.id]).map((g) => `Oh — before I forget, ${(g.say || `I also want ${g.name.toLowerCase()}, about {amt}, in {yrs} years.`).replace("{amt}", v(g.target)).replace("{yrs}", g.years).replace(/^(?!I\b|I')./, (x) => x.toLowerCase())}`);
+    const surprise = c.truth.goals.filter((g) => g.hidden && !c.collected["goal-" + g.id]).map((g) => solo(c, `Oh — before I forget, ${(g.say || `I also want ${g.name.toLowerCase()}, about {amt}, in {yrs} years.`).replace("{amt}", v(g.target)).replace("{yrs}", g.years).replace(/^(?!I\b|I')./, (x) => x.toLowerCase())}`));
     return {
       clientId: c.id,
       meetingType: type,
@@ -1000,7 +1031,15 @@ ${type === "email" ? "You're emailing your planner between meetings. Only mentio
       c.pendingEvents = [];
       if (typeof FP !== "undefined") FP.afterMeeting(c, type, score);
       if (["discovery", "followup"].includes(type) && c.stage === "prospect") c.stage = "discovery";
-      if (type === "presentation") c.stage = score >= 55 ? "client" : c.stage;
+      if (type === "presentation") {
+        c.stage = score >= 55 ? "client" : c.stage;
+        // They react to what's actually in the plan you presented.
+        const flags = c.plan ? compliance(c, c.plan).filter((f) => f.sev === "high").length : 0;
+        if (flags) {
+          c.relationship = Math.max(0, c.relationship - flags * 2);
+          c.relHistory.push({ month: c.month, delta: -flags * 2, reason: `Presented a plan with ${flags} unsuitable recommendation${flags === 1 ? "" : "s"}` });
+        }
+      }
       if (type === "review") c.stage = "client";
       report = { found: Object.keys(found).length, docFacts: docFacts.length, missingDocs, delta, rem, total: fields(c).length, collected: Object.keys(c.collected).length, mood: P.sc.mood?.label || null, moodRead, concepts };
     });
@@ -1259,7 +1298,7 @@ ${type === "email" ? "You're emailing your planner between meetings. Only mentio
   const AGENDA = {
     discovery: [
       { id: "intro", label: "Introductions & rapport", me: /\b(nice to meet|thanks for coming|how are you|tell me about yourself|great to meet)\b/i },
-      { id: "process", label: "Explain how you work (process & next steps)", me: /\b(how (this|I) work|process|today we|agenda|what to expect|confidential)\b/i },
+      { id: "process", label: "Explain how you work (process & next steps)", me: /\b(how (this|I) work|process|today (we|i'?ll|i will|i'?m going|is about)|agenda|what to expect|confidential|here'?s how|walk you through|first,? (i'?ll|we'?ll)|then (i'?ll|we'?ll) build|build (you )?a plan)\b/i },
       { id: "goals", label: "Goals & what matters to them", keys: /^goal-/ },
       { id: "cash", label: "Cash flow: take-home pay & spending", keys: /^(takeHome|housing|living)$/ },
       { id: "assets", label: "Savings & emergency fund", keys: /^cash$/ },

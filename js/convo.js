@@ -1010,7 +1010,7 @@ async function onMyTurn(text, duration, audio = null) {
   P.thinking = false;
   if (r.end) P.ending = true;
   // Built-in partner: a light human touch so canned lines don't sound read off a card.
-  if (P.sc.offline && !/^\[/.test(r.reply) && Math.random() < 0.3) r.reply = ["Um, ", "Yeah, ", "So, ", "Hmm. ", "Honestly? "][Math.floor(Math.random() * 5)] + r.reply.replace(/^./, (x) => (/^I\b/.test(r.reply) ? x : x.toLowerCase()));
+  if (P.sc.offline && !/^\[/.test(r.reply) && !/^(um|uh|so|yeah|honestly|hmm|oh|okay|ok|well|like i said|sorry|alright|right|yes|no|i don't)\b/i.test(r.reply) && Math.random() < 0.3) r.reply = ["Um, ", "Yeah, ", "So, ", "Hmm. ", "Honestly? "][Math.floor(Math.random() * 5)] + r.reply.replace(/^./, (x) => (/^I\b/.test(r.reply) ? x : x.toLowerCase()));
   say(r.reply);
 }
 

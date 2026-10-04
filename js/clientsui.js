@@ -450,7 +450,8 @@ function clPlan(c, el) {
         continue;
       }
       const alloc = g.years <= 3 ? { stocks: 0, bonds: 20, cash: 80 } : plan.alloc;
-      const r = Clients.monteCarlo({ start: c.goalBalances?.[g.id] || 0, monthly: +plan.goalSavings[g.id] || 0, years: g.years, alloc, target: g.target, n: 500 });
+      const isRet = g.id === "retire";
+      const r = Clients.monteCarlo({ start: isRet ? (k.k401 || 0) + (k.roth || 0) : c.goalBalances?.[g.id] || 0, monthly: (+plan.goalSavings[g.id] || 0) + (isRet ? (c.income / 12) * ((+plan.k401Pct || 0) + Math.min(k.match || 0, +plan.k401Pct || 0)) / 100 : 0), years: g.years, alloc, target: g.target, n: 500 });
       box.innerHTML = ring(Math.round(r.success * 100), { size: 46 });
     }
     const flags = Clients.compliance(c, plan);
@@ -486,11 +487,25 @@ function clPlan(c, el) {
     b.addEventListener("click", () => {
       const g = goals.find((x) => x.id === b.dataset.need);
       if (!g?.target || !g.years) return toast("Need the goal's amount and timeline first.");
-      const amt = Clients.needed90({ start: c.goalBalances?.[g.id] || 0, years: g.years, alloc: g.years <= 3 ? { stocks: 0, bonds: 20, cash: 80 } : plan.alloc, target: g.target });
+      const k = Clients.known(c);
+      const alloc = g.years <= 3 ? { stocks: 0, bonds: 20, cash: 80 } : plan.alloc;
+      // Retirement already gets the 401(k) balance and contributions — only top up what's missing.
+      const ret = g.id === "retire";
+      const k401m = ret ? (c.income / 12) * ((+plan.k401Pct || 0) + Math.min(k.match || 0, +plan.k401Pct || 0)) / 100 : 0;
+      const start = ret ? (k.k401 || 0) + (k.roth || 0) : c.goalBalances?.[g.id] || 0;
+      const need = Math.max(0, Clients.needed90({ start, years: g.years, alloc, target: g.target }) - k401m);
+      // Never more than they can actually spare after the rest of the plan.
+      const others = Object.entries(plan.goalSavings || {}).filter(([id]) => id !== g.id).reduce((n, [, v]) => n + (+v || 0), 0);
+      const spare = Math.max(0, Math.round((k.takeHome - (k.expenses || 0) - k.minPay - (+plan.efMonthly || 0) - (+plan.extraDebt || 0) - others) / 10) * 10);
+      const amt = Math.round(Math.min(need, spare) / 10) * 10;
       $("pl-g-" + g.id).value = amt;
       plan.goalSavings[g.id] = amt;
       changed();
-      toast(`${Clients.usd(amt)}/month reaches ${g.name.toLowerCase()} in about 9 of 10 simulated futures.`);
+      if (need === 0) toast(ret ? `The 401(k) alone should get ${c.first} there — no extra savings needed.` : "They're already on track.");
+      else if (amt < need) {
+        const pr = Math.round(Clients.monteCarlo({ start, monthly: amt + k401m, years: g.years, alloc, target: g.target, n: 500 }).success * 100);
+        toast(`Hitting 90% would take ${Clients.usd(need)}/month, but only ${Clients.usd(spare)} is left in their budget — that gets about ${pr}%. Stretch the timeline, lower the target, or find spending cuts together.`);
+      } else toast(`${Clients.usd(amt)}/month${ret ? " on top of the 401(k)" : ""} reaches ${g.name.toLowerCase()} in about 9 of 10 simulated futures.`);
     })
   );
   $("pl-notes").addEventListener("input", (e) => ((plan.notes = e.target.value), clearTimeout(clPlan._t), (clPlan._t = setTimeout(save, 600))));
@@ -506,14 +521,10 @@ function clPlan(c, el) {
     Clients.update(c.id, (x) => {
       x.plan = { ...plan, efTarget: (k.expenses || 0) * plan.efMonths, submittedAt: Date.now(), month: x.month, grade: g };
       if (x.stage === "discovery" || x.stage === "prospect") x.stage = "plan";
-      const flags = Clients.compliance(x, plan).filter((f) => f.sev === "high").length;
-      if (flags) {
-        x.relationship = Math.max(0, x.relationship - flags * 2);
-        x.relHistory.push({ month: x.month, delta: -flags * 2, reason: `${flags} unsuitable recommendation${flags === 1 ? "" : "s"} in the plan` });
-      }
     });
     showGrade(g);
-    toast(`Plan graded: ${g.total}/100. Next: present it to ${c.first}.`);
+    const flags = Clients.compliance(Clients.find(c.id), plan).filter((f) => f.sev === "high").length;
+    toast(flags ? `Plan graded: ${g.total}/100 — but ${flags} compliance issue${flags === 1 ? "" : "s"} to fix before you present it. You can resubmit anytime.` : `Plan graded: ${g.total}/100. Next: present it to ${c.first}.`);
   };
   $("pl-ai")?.addEventListener("click", (e) =>
     busy(e.currentTarget, async () => {

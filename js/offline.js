@@ -203,7 +203,12 @@ const OFFLINE = (() => {
       // Mason is explaining or advising: show you understood — mostly statements, a question at most every third time.
       const sp = surprise();
       if (sp) return say(sp);
-      const topic = CLIENT.understood.find(([re]) => re.test(t));
+      if (/\b(last time|you told me|you mentioned|you said|to recap|recap|as we discussed)\b/i.test(t) && !sc.recapped) {
+        sc.recapped = true;
+        return say(pickFresh(["Yep, that's right.", "Yeah — that's pretty much it.", "Right, exactly. That's what's been on my mind.", "Mm-hm. That about sums it up."]));
+      }
+      // React to the main point (the topic mentioned most), not a word in passing.
+      const topic = CLIENT.understood.map(([re, ls]) => [re, ls, (t.match(new RegExp(re.source, "gi")) || []).length]).filter((x) => x[2]).sort((a, z) => z[2] - a[2])[0];
       const lines = fresh(topic ? topic[1] : []);
       if (lines.length) return say(pick(lines) + flavor());
       sc.qTurns = (sc.qTurns || 0) + 1;
@@ -244,7 +249,15 @@ const OFFLINE = (() => {
     const relevance = clamp(55 + Math.min(30, avgWords / 3) - (avgWords > 220 ? 15 : 0));
     const cats = {
       interview: [["Content & examples", content], ["Structure (STAR)", structure], ["Relevance", relevance], ["Delivery & confidence", delivery], ["Engagement (questions asked)", engage]],
-      fpclient: [["Rapport & empathy", clamp(50 + (all.match(/\b(understand|makes sense|that's|totally|sounds)\b/gi) || []).length * 8)], ["Discovery questions", clamp(25 + (sc.revealed?.length || 0) * 11 + m.questionsAsked * 4)], ["Advice quality & suitability", clamp(40 + (all.match(/\b(emergency fund|budget|401|match|roth|pay off|interest|index fund)\b/gi) || []).length * 9)], ["Clarity (no jargon)", clamp(85 - (all.match(/\b(asset allocation|liquidity|basis points|expense ratio|beta)\b/gi) || []).length * 10)], ["Delivery & confidence", delivery]],
+      fpclient: [["Rapport & empathy", clamp(50 + (all.match(/\b(understand|makes sense|that's|totally|sounds)\b/gi) || []).length * 8)], (() => {
+        // Discovery is about questions; every other client meeting is about covering what you came to do.
+        const cl = sc.clientId && typeof Clients !== "undefined" ? Clients.find(sc.clientId) : null;
+        if (cl && sc.meetingType && sc.meetingType !== "discovery") {
+          const ag = Clients.agendaStatus(cl, sc.meetingType, thread, sc).filter((x) => !/^(news-mkt|guest|steer)/.test(x.id));
+          return ["Agenda covered", clamp(Math.round((ag.filter((x) => x.done).length / Math.max(1, ag.length)) * 100))];
+        }
+        return ["Discovery questions", clamp(25 + (sc.revealed?.length || 0) * 11 + m.questionsAsked * 4)];
+      })(), ["Advice quality & suitability", clamp(40 + (all.match(/\b(emergency fund|budget|401|match|roth|pay off|interest|index fund)\b/gi) || []).length * 9)], ["Clarity (no jargon)", clamp(85 - (all.match(/\b(asset allocation|liquidity|basis points|expense ratio|beta)\b/gi) || []).length * 10)], ["Delivery & confidence", delivery]],
       sales: [["Opening & rapport", clamp(55 + (mine[0] && words(mine[0].text).length > 12 ? 15 : 0))], ["Discovery of needs", clamp(25 + (sc.revealed?.length || 0) * 22)], ["Value pitch", content], ["Objection handling", clamp(40 + Math.min(40, mine.length * 5))], ["Closing & next step", clamp(/\b(next step|trial|demo|get started|sign)\b/i.test(all) ? 80 : 35)]],
       networking: [["Introduction", clamp(mine[0] ? 50 + Math.min(35, words(mine[0].text).length) : 30)], ["Curiosity & questions", engage], ["Specific ask", clamp(/\b(could i|would you be open|email|coffee|follow up)\b/i.test(all) ? 85 : 30)], ["Listening & follow-up", clamp(45 + m.questionsAsked * 10)], ["Delivery & confidence", delivery]],
     }[kind];
@@ -255,7 +268,7 @@ const OFFLINE = (() => {
     const improvements = [];
     if (thin && words(thin.text).length < 40) improvements.push({ issue: "Answer was too short to show what you did", quote: thin.text.slice(0, 160), better: "Add the situation, the specific action you took, and the result — with a number if you have one." });
     if (fillerTurn && (fillerTurn.text.match(FILLERS) || []).length >= 2) improvements.push({ issue: "Filler words weakened this answer", quote: fillerTurn.text.slice(0, 160), better: "Pause silently instead of saying “um” or “like” — a one-second pause sounds confident." });
-    if (numbers === 0) improvements.push({ issue: "No numbers or measurable results", quote: (mine[1] || mine[0])?.text.slice(0, 160) || "", better: "Use real figures from your work (lines of code, users, hours saved, returns in a backtest)." });
+    if (numbers === 0 && kind !== "fpclient") improvements.push({ issue: "No numbers or measurable results", quote: (mine[1] || mine[0])?.text.slice(0, 160) || "", better: "Use real figures from your work (lines of code, users, hours saved, returns in a backtest)." });
     if (m.questionsAsked < 2) improvements.push({ issue: "You asked very few questions", quote: mine[mine.length - 1]?.text.slice(0, 160) || "", better: kind === "interview" ? "End with a question like “What does a great intern do in the first month here?”" : "Ask open questions before giving answers or pitching." });
     // Answer-by-answer: score each reply on length, specifics and fillers.
     const answers = thread
@@ -266,6 +279,22 @@ const OFFLINE = (() => {
         const w = words(t.text).length;
         const nums = (t.text.match(/\d/g) || []).length;
         const fill = (t.text.match(FILLERS) || []).length;
+        if (kind === "fpclient") {
+          // A planner's lines are judged like a planner's: open questions, empathy, plain words, summaries.
+          const x = t.text;
+          const p = prev?.text || "";
+          const open = /\b(what|how|tell me|walk me through|why|describe|talk me through)\b/i.test(x) && /\?|tell me|walk me/i.test(x);
+          const closed = /^(do|did|are|is|have|has|can|will|would)\b[^?]*\?$/i.test(x.trim()) && w < 14;
+          const feeling = /\b(worried|scared|nervous|stress|anxious|embarrass|lost|divorce|passed away|laid off|rough|hard)\b/i.test(p);
+          const empathy = /\b(understand|sorry|that's (hard|tough|stressful|a lot)|i hear you|makes sense|totally|of course|no problem|take your time)\b/i.test(x);
+          const jargon = /\b(asset allocation|sequence of returns|expense ratio|standard deviation|amortiz\w*|liquidity|basis points|tax.?loss harvest\w*)\b/i.test(x);
+          const summary = /\b(so what I'?m hearing|it sounds like|to recap|if I understand|so you'?re saying|let me make sure)\b/i.test(x);
+          const promise = /\b(guarantee|can't lose|risk.?free)\b/i.test(x);
+          const why = /(because|since|so that|so a|which means|that way|so you)/i.test(x);
+          const score = clamp(62 + (open ? 14 : 0) + (summary ? 14 : 0) + (why ? 12 : 0) + (feeling && empathy ? 14 : 0) - (closed ? 8 : 0) - (feeling && !empathy ? 14 : 0) - (jargon ? 12 : 0) - (promise ? 30 : 0) - fill * 6 - (w > 110 ? 12 : 0));
+          const tip = promise ? "Never promise returns or guarantees." : feeling && !empathy ? "They shared a feeling — acknowledge it before moving on." : jargon ? "Jargon — say it in everyday words." : w > 110 ? "Long — break it up and check in with them." : summary ? "Great reflective listening." : why ? "Nice — you explained why it fits them." : feeling && empathy ? "Nice — you acknowledged how they feel." : open ? "Good open question — it lets them talk." : closed ? "Yes/no question — try “Tell me about…” to get more." : fill >= 2 ? "Cut the filler words; pause instead." : "Clear and focused.";
+          return { prompt: p.slice(0, 90), quote: words(x).slice(0, 15).join(" "), score, tip };
+        }
         const score = clamp(40 + Math.min(30, w / 2) + (nums ? 12 : 0) + (/\bI (built|made|led|fixed|learned|created|tested)\b/i.test(t.text) ? 10 : 0) - fill * 7 - (w > 200 ? 15 : 0));
         const tip = w < 25 ? "Too short — add what you did and what happened." : fill >= 2 ? "Cut the filler words; pause instead." : !nums && kind === "interview" ? "Add a number or concrete result." : w > 200 ? "Tighten it — lead with the point, then one example." : "Good — keep this structure.";
         return { prompt: (prev?.text || "").slice(0, 90), quote: words(t.text).slice(0, 15).join(" "), score, tip };
