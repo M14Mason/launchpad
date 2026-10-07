@@ -1340,3 +1340,33 @@ label.check input { margin-top: 3px; }
 .mode-cards { grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); }
 
 @media (max-width: 1279px) { .fp-dock .mini-cal { display: none; } }
+
+/* ---------- live coach, hints, expert, portfolio ---------- */
+.lv-coach { min-height: 0; margin: 6px auto 0; padding: 0; border-radius: 999px; font-weight: 600; font-size: 14px; opacity: 0; transition: opacity .25s; text-align: center; width: fit-content; }
+.lv-coach.show { opacity: 1; padding: 7px 14px; }
+.lv-coach.warn { background: var(--warn-soft); color: var(--warn); }
+.lv-coach.info { background: var(--accent-soft); color: var(--accent); }
+.lv-hintbox { display: flex; gap: 8px; align-items: flex-start; margin: 10px auto 0; max-width: 560px; padding: 10px 14px; border-radius: var(--r); background: var(--accent-soft); color: var(--text); font-size: 14px; }
+.lv-hintbox .i { color: var(--accent); flex: none; margin-top: 2px; }
+.mc-alerts { display: flex; gap: 8px; align-items: center; margin: 6px 0 10px; font-size: 14px; }
+.watch-expert { display: flex; gap: 14px; align-items: center; flex-wrap: wrap; }
+.watch-expert h2 { margin: 0 0 4px; }
+.ex-lines { display: flex; flex-direction: column; gap: 10px; margin-top: 14px; }
+.ex-line { padding: 12px 14px; border-radius: var(--r); border: 1px solid var(--border); transition: border-color .2s, background .2s; }
+.ex-line.planner { background: var(--surface); }
+.ex-line.client { background: var(--surface-2); margin-left: 28px; }
+.ex-line.now { border-color: var(--accent); background: var(--accent-soft); }
+.ex-who { font-size: 12px; font-weight: 600; color: var(--muted); text-transform: uppercase; letter-spacing: .04em; }
+.ex-text { margin-top: 3px; }
+.ex-why { display: flex; gap: 6px; margin-top: 6px; font-size: 12.5px; color: var(--good); }
+.ex-why .i { width: 14px; height: 14px; flex: none; margin-top: 2px; }
+.pf-actions { margin-bottom: 14px; }
+.portfolio { display: flex; flex-direction: column; gap: 16px; }
+.portfolio .stats, .portfolio section { margin: 0; }
+.pf-plan, .pf-meet { padding: 10px 0; border-bottom: 1px solid var(--border); }
+.pf-plan:last-child, .pf-meet:last-child { border-bottom: 0; }
+.pf-plan ul { margin: 6px 0 0; padding-left: 18px; }
+.pf-meet p { margin: 6px 0 0; color: var(--text-2); }
+.pf-row { padding: 6px 0; border-bottom: 1px solid var(--border); }
+#print-root .portfolio { padding: .3in; color: #111; }
+#print-root .portfolio .card { border: 1px solid #ddd; box-shadow: none; break-inside: avoid; }

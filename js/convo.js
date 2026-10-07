@@ -242,6 +242,7 @@ function micCheckHTML() {
     <div class="local-status small" id="mc-local"></div>
     <label class="field"><span>Device / ElevenLabs voice</span><div class="row"><select id="mc-voice" style="flex:1"><option>Loading voices…</option></select><button class="btn small" id="mc-say">${icon("volume")} Sound check</button></div></label>
     <div class="sound-check" id="mc-sound" hidden></div>
+    <label class="check mc-alerts"><input type="checkbox" id="mc-alerts" ${getSettings().liveAlerts !== false ? "checked" : ""}> Live alerts while I talk (“Slow down!”, fillers, energy, let them talk)</label>
     <label class="field"><span>Send my answer</span><div class="segmented" id="mc-send">${[["1.5", "After 1.5s pause"], ["2", "2s"], ["3", "3s"], ["5", "5s"], ["tap", "When I tap"]].map(([v, l]) => `<button data-send="${v}" class="${String(getSettings().sendAfter || "2") === v ? "on" : ""}">${l}</button>`).join("")}</div></label>
     <label class="field"><span>Speaking speed</span><div class="segmented" id="mc-rate">${[0.9, 1, 1.1, 1.2].map((r) => `<button data-rate="${r}" class="${(getSettings().voiceRate || 1) === r ? "on" : ""}">${r === 1 ? "Normal" : r + "×"}</button>`).join("")}</div></label>
     <p class="small muted">The free on-device engines (Kokoro voices and Whisper speech recognition) have no limits or accounts. They download once (about 90 MB each) and then work offline; each character gets a matching voice.</p>`;
@@ -281,6 +282,7 @@ function wireMicCheck() {
       document.querySelectorAll("#mc-stt-eng button").forEach((x) => x.classList.toggle("on", x === b));
     })
   );
+  document.getElementById("mc-alerts")?.addEventListener("change", (e) => Store.set("settings", { ...getSettings(), liveAlerts: e.target.checked }));
   document.querySelectorAll("#mc-tts-eng [data-tts]").forEach((b) =>
     b.addEventListener("click", () => {
       Store.set("settings", { ...getSettings(), tts: b.dataset.tts });
@@ -642,7 +644,7 @@ function renderLive() {
   const { sc } = P;
   const initials = sc.counterpart.name.split(" ").map((w) => w[0]).join("").slice(0, 2);
   app.innerHTML = `
-    <div class="live-top"><div><div class="eyebrow">${esc(practiceLabel())} · ${LEVEL_LABEL[P.difficulty]} <span class="pill" id="lv-mode" ${sc.offline ? "" : "hidden"}>Built-in partner</span></div><h1 class="live-title">${esc(sc.title)}</h1></div>
+    <div class="live-top"><div><div class="eyebrow">${esc(practiceLabel())}${LEVEL_LABEL[P.difficulty] ? " · " + LEVEL_LABEL[P.difficulty] : ""} <span class="pill" id="lv-mode" ${sc.offline ? "" : "hidden"}>Built-in partner</span></div><h1 class="live-title">${esc(sc.title)}</h1></div>
       <div class="row"><span class="pill mono" id="lv-clock">0:00</span><button class="btn" id="lv-end">${icon("stop")} End & analyze</button></div></div>
     <div class="lv-progress"><i id="lv-prog"></i></div>
     <div class="live">
@@ -1056,6 +1058,12 @@ async function endPractice() {
     }
   }
   P.result ||= OFFLINE.analyze(P.sc, P.thread, metrics, P.kind);
+  // Hints cost a little: 3 points each.
+  if (P.hints) {
+    P.result.overall = Math.max(0, (P.result.overall || 0) - P.hints * 3);
+    (P.result.improvements ||= []).push({ issue: `Used ${P.hints} hint${P.hints === 1 ? "" : "s"} (−${P.hints * 3} points)`, quote: "", better: "Next time, try the move yourself first — the hint will still be there if you get stuck." });
+  }
+  if (typeof LiveCoach !== "undefined") LiveCoach.stop();
   // Client meeting: save what you learned and update the relationship.
   P.clientReport = null;
   if (P.sc.clientId) {

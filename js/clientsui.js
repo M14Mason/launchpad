@@ -524,6 +524,11 @@ function clPlan(c, el) {
     });
     showGrade(g);
     const flags = Clients.compliance(Clients.find(c.id), plan).filter((f) => f.sev === "high").length;
+    if (!document.getElementById("pl-export")) document.getElementById("pl-submit").insertAdjacentHTML("afterend", ` <button class="btn" id="pl-export">${icon("download")} Export plan as PDF</button>`);
+    document.getElementById("pl-export").onclick = () => {
+      document.getElementById("print-root").innerHTML = clDocHTML(Clients.find(c.id));
+      setTimeout(() => window.print(), 50);
+    };
     toast(flags ? `Plan graded: ${g.total}/100 — but ${flags} compliance issue${flags === 1 ? "" : "s"} to fix before you present it. You can resubmit anytime.` : `Plan graded: ${g.total}/100. Next: present it to ${c.first}.`);
   };
   $("pl-ai")?.addEventListener("click", (e) =>
@@ -581,8 +586,9 @@ function clStress(c, el) {
 }
 
 function clMeetings(c, el) {
-  if (!c.meetings.length) return (el.innerHTML = empty("No meetings yet."));
-  el.innerHTML = c.meetings
+  const watch = `<section class="card watch-expert"><div class="grow"><h2>${icon("play")} Watch an expert</h2><p class="small muted">Hear a seasoned planner run each meeting with ${esc(c.first)} — out loud, with notes on why each line works.</p></div><div class="row wrap-gap">${["discovery", "presentation", "review"].map((t) => `<a class="btn small" href="#expert/${c.id}/${t}">${Clients.MEETING_NAME[t]}</a>`).join("")}</div></section>`;
+  if (!c.meetings.length) return (el.innerHTML = watch + empty("No meetings yet."));
+  el.innerHTML = watch + c.meetings
     .map((m, idx) => ({ m, idx }))
     .reverse()
     .map(({ m, idx }) => {
@@ -734,6 +740,7 @@ function renderClientBrief() {
       <div class="ps-stage"><div class="orb-host" id="ps-orb"></div></div></section>
     <div class="practice-setup"><section class="card"><h2>Your agenda</h2>
       ${m.reason ? `<div class="notice">${icon("message")} ${esc(c.first)} called: “${esc(m.reason)}”</div>` : ""}
+      ${["discovery", "presentation", "review"].includes(m.type) ? `<p class="small"><a href="#expert/${c.id}/${m.type}">${icon("play")} Watch an expert do this meeting first</a></p>` : ""}
       ${c.pendingEvents.length ? `<div class="notice warn">${icon("alert")} Something changed since your last meeting — let ${esc(c.first)} tell you about it.</div>` : ""}
       ${m.type === "presentation" ? `<p class="small">Present your plan (grade ${c.plan?.grade?.total ?? "—"}/100) in plain English and connect each step to their goals.</p>` : ""}
       ${c.difficulty === "tough" && m.type !== "presentation" ? `<p class="small muted">Tough client — no checklist. Cover cash flow, debts, savings, retirement, goals, risk and protection, and anything new.</p>` : `<ul class="small agenda-list">${Clients.agendaFor(c, m.type).map((a) => `<li>${esc(a.label)}</li>`).join("")}</ul>`}
